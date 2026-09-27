@@ -13,7 +13,9 @@ Open <http://127.0.0.1:4173>. The VS Code style workspace saves source files, op
 
 Drag the Explorer, Program Tools, terminal, and split-editor dividers to resize them. The activity bar toggles panels. `Ctrl+Enter` runs, `Ctrl+Shift+B` compiles, `Ctrl+S` saves locally, `Ctrl+\\` splits the editor, `Ctrl+W` closes a tab, and `Ctrl+Tab` cycles tabs. Compile a file and use the Build panel to download a portable project JSON.
 
-In an editor, `Ctrl+click` or `F12` jumps to a symbol's declaration, `Shift+F12` lists its references, and `Alt+Left` returns to the previous location. Navigation follows routine and class scopes within the active source file; each `.pseudo` file is compiled separately.
+The editor supports `Ctrl+Z` undo, `Ctrl+Shift+Z` or `Ctrl+Y` redo, and an editor action menu on right-click. `Ctrl+F` opens Find; Enter and Shift+Enter move through matches while keeping Find focused. `F2` renames the symbol under the cursor and its references in the current file, with one undo step for the rename.
+
+In an editor, holding Ctrl underlines a symbol that has a definition. `Ctrl+click` jumps to its declaration and opens a references box; clicking a declaration opens the same box. `F12` jumps to the declaration, `Shift+F12` opens references, and `Alt+Left` returns to the previous location. Navigation follows routine and class scopes within the active source file; each `.pseudo` file is compiled separately.
 
 `INPUT` pauses at the terminal when preloaded stdin is exhausted. Type a value and press Enter to continue. The browser replays the compiled module with the supplied inputs and a fixed random seed, so earlier output and virtual file effects appear only once.
 

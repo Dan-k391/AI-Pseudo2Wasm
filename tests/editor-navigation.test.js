@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { indexSource } from '../web/editor-navigation.js';
+import { indexSource, renameSymbol } from '../web/editor-navigation.js';
 
 let count = 0;
 function check(name, run) { run(); count++; console.log(`✓ ${name}`); }
@@ -43,6 +43,12 @@ check('resolves routines and members to their owning class', () => {
 check('works on incomplete code without needing a successful parse', () => {
   const source = 'DECLARE Value : INTEGER\nIF Value >\n OUTPUT Value';
   assert.deepEqual(indexSource(source).at(token(source, 'Value', 2)).references.map(x => x.line), [2, 3]);
+});
+
+check('renames only a resolved symbol and preserves strings and shadowed parameters', () => {
+  const source = 'DECLARE X : INTEGER\nPROCEDURE Test(X : INTEGER)\n OUTPUT X\nENDPROCEDURE\nOUTPUT X, "X"';
+  const result = indexSource(source).at(token(source, 'X', 0));
+  assert.equal(renameSymbol(source, result, 'Score'), 'DECLARE Score : INTEGER\nPROCEDURE Test(X : INTEGER)\n OUTPUT X\nENDPROCEDURE\nOUTPUT Score, "X"');
 });
 
 console.log(`${count} navigation tests passed`);

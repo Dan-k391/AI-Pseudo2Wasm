@@ -5,15 +5,16 @@ import { compileSelfHostedInBrowser } from './selfhost.js';
 import { completions, diagnosticRange } from './editor-intelligence.js';
 import { selectExplorerFiles, moveExplorerFiles } from './explorer-selection.js';
 import { findMatches, replaceMatches } from './editor-search.js';
-import { indexSource } from './editor-navigation.js';
+import { indexSource, renameSymbol } from './editor-navigation.js';
+import { createEditorHistory } from './editor-history.js';
 
 const $ = id => document.getElementById(id);
 const app = document.querySelector('.app');
 const consoleContent = $('console-content');
 const STORAGE = 'pseudo2wasm.project.v2';
 const panes = {
-  primary: { group: $('primary-group'), tabs: $('primary-tabs'), editor: $('primary-editor'), highlight: $('primary-highlight'), gutter: $('primary-gutter'), completion: $('primary-completion'), search: $('primary-search'), searchInput: $('primary-search-input'), replaceInput: $('primary-replace-input') },
-  secondary: { group: $('secondary-group'), tabs: $('secondary-tabs'), editor: $('secondary-editor'), highlight: $('secondary-highlight'), gutter: $('secondary-gutter'), completion: $('secondary-completion'), search: $('secondary-search'), searchInput: $('secondary-search-input'), replaceInput: $('secondary-replace-input') },
+  primary: { group: $('primary-group'), tabs: $('primary-tabs'), editor: $('primary-editor'), highlight: $('primary-highlight'), gutter: $('primary-gutter'), completion: $('primary-completion'), search: $('primary-search'), searchInput: $('primary-search-input'), replaceInput: $('primary-replace-input'), peek: $('primary-reference-peek') },
+  secondary: { group: $('secondary-group'), tabs: $('secondary-tabs'), editor: $('secondary-editor'), highlight: $('secondary-highlight'), gutter: $('secondary-gutter'), completion: $('secondary-completion'), search: $('secondary-search'), searchInput: $('secondary-search-input'), replaceInput: $('secondary-replace-input'), peek: $('secondary-reference-peek') },
 };
 const examples = [
   { name: 'Hello world', filename: 'hello-world.pseudo', code: `// Your first CAIE pseudocode program\nDECLARE Name : STRING\nOUTPUT "What is your name?"\nINPUT Name\nOUTPUT "Hello, ", Name, "!"\n` },
@@ -54,6 +55,8 @@ let draggedFile = null;
 let selectedFiles = [], selectionAnchor = null;
 let referenceQuery = null;
 const navigationHistory = [];
+const editHistory = createEditorHistory();
+const navigationIndexes = new Map();
 
 const activeName = () => project.panes[project.activePane].active;
 const activeSource = () => project.sourceFiles[activeName()] ?? '';
@@ -61,12 +64,13 @@ const escape = value => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').repla
 const tokenPattern = /\/\/[^\n]*|"(?:""|\\.|[^"])*"|'(?:''|\\.|[^'])*'|\b(?:DECLARE|CONSTANT|TYPE|ENDTYPE|DEFINE|CLASS|ENDCLASS|PUBLIC|PRIVATE|INHERITS|FUNCTION|ENDFUNCTION|PROCEDURE|ENDPROCEDURE|RETURNS|RETURN|BYREF|BYVAL|CALL|NEW|SUPER|OUTPUT|INPUT|OPENFILE|CLOSEFILE|READFILE|WRITEFILE|GETRECORD|PUTRECORD|SEEK|FOR|TO|STEP|NEXT|WHILE|ENDWHILE|REPEAT|UNTIL|IF|THEN|ELSE|ENDIF|CASE|OF|OTHERWISE|ENDCASE|AND|OR|NOT|IN|DIV|MOD|TRUE|FALSE|NULL|INTEGER|REAL|BOOLEAN|CHAR|STRING|DATE|ARRAY|SET|READ|WRITE|APPEND|RANDOM)\b|\b\d+(?:\.\d+)?\b|[←&<>+=*/^-]/gi;
 const flow = new Set(['IF','THEN','ELSE','ENDIF','CASE','OF','OTHERWISE','ENDCASE','FOR','TO','STEP','NEXT','WHILE','ENDWHILE','REPEAT','UNTIL','FUNCTION','ENDFUNCTION','PROCEDURE','ENDPROCEDURE','RETURN','CALL','CLASS','ENDCLASS']);
 const types = new Set(['INTEGER','REAL','BOOLEAN','CHAR','STRING','DATE','ARRAY','SET']);
-function colorize(source, issues = [], matches = [], current = -1) {
+function colorize(source, issues = [], matches = [], current = -1, navigationRange = null) {
   const ranges = issues.map(issue => diagnosticRange(source, issue)).filter(Boolean);
   let last = 0, html = '', matchCursor = 0;
   const segment = (value, offset, cls = '') => {
     const cuts = [0, value.length];
     for (const [start, end] of ranges) { if (start > offset && start < offset + value.length) cuts.push(start - offset); if (end > offset && end < offset + value.length) cuts.push(end - offset); }
+    if (navigationRange) for (const point of navigationRange) if (point > offset && point < offset + value.length) cuts.push(point - offset);
     while (matches[matchCursor]?.end <= offset) matchCursor++;
     for (let j = matchCursor; j < matches.length && matches[j].start < offset + value.length; j++) {
       const match = matches[j];
@@ -79,7 +83,8 @@ function colorize(source, issues = [], matches = [], current = -1) {
       const error = ranges.some(([start, end]) => offset + a >= start && offset + a < end);
       while (matches[matchCursor]?.end <= offset + a) matchCursor++;
       const matchIndex = matches[matchCursor]?.start <= offset + a ? matchCursor : -1;
-      const classes = [cls, error ? 'editor-error-underline' : '', matchIndex < 0 ? '' : matchIndex === current ? 'search-current' : 'search-match'].filter(Boolean).join(' ');
+      const link = navigationRange && offset + a >= navigationRange[0] && offset + a < navigationRange[1];
+      const classes = [cls, error ? 'editor-error-underline' : '', matchIndex < 0 ? '' : matchIndex === current ? 'search-current' : 'search-match', link ? 'navigation-link' : ''].filter(Boolean).join(' ');
       html += classes ? `<span class="${classes}">${escape(value.slice(a, b))}</span>` : escape(value.slice(a, b));
     }
   };
@@ -191,7 +196,7 @@ function showFileContextMenu(event, name, which = null) {
   if (!Object.hasOwn(project.sourceFiles, name)) return;
   event.preventDefault(); event.stopPropagation(); hideContextMenu();
   if (!which && !selectedFiles.includes(name)) selectSource(name);
-  const menu = $('editor-context-menu'); menu._invoker = event.currentTarget;
+  const menu = $('editor-context-menu'); menu._invoker = event.currentTarget; menu.setAttribute('aria-label', 'File actions');
   const addAction = (label, action, { danger = false, disabled = false } = {}) => {
     const button = document.createElement('button'); button.type = 'button'; button.role = 'menuitem'; button.textContent = label;
     button.disabled = disabled; button.className = danger ? 'context-danger' : '';
@@ -224,6 +229,49 @@ function showFileContextMenu(event, name, which = null) {
   }
   menu.hidden = false;
   const anchor = event.currentTarget.getBoundingClientRect(), x = event.clientX || anchor.left + 16, y = event.clientY || anchor.bottom;
+  menu.style.left = `${Math.max(8, Math.min(x, innerWidth - menu.offsetWidth - 8))}px`;
+  menu.style.top = `${Math.max(8, Math.min(y, innerHeight - menu.offsetHeight - 8))}px`;
+  menu.querySelector('button:not(:disabled)')?.focus();
+}
+function showEditorContextMenu(event, which) {
+  event.preventDefault(); event.stopPropagation(); hideCompletions(which); hideContextMenu();
+  const pane = panes[which], editor = pane.editor, menu = $('editor-context-menu'); menu.setAttribute('aria-label', 'Editor actions');
+  const file = project.panes[which].active;
+  if (!file) return;
+  const start = editor.selectionStart, end = editor.selectionEnd;
+  const targetOffset = event.clientX && event.clientY ? editorOffsetAtPoint(which, event.clientX, event.clientY) : start;
+  const target = navigationTarget(which, targetOffset);
+  menu._invoker = editor;
+  const action = (label, shortcut, run, disabled = false) => {
+    const button = document.createElement('button'); button.type = 'button'; button.role = 'menuitem'; button.className = 'menu-action'; button.disabled = disabled;
+    const title = document.createElement('span'); title.textContent = label;
+    const key = document.createElement('span'); key.className = 'menu-shortcut'; key.textContent = shortcut;
+    button.append(title, key); button.addEventListener('click', () => { hideContextMenu(); run(); }); menu.append(button);
+  };
+  const divider = () => { const line = document.createElement('div'); line.className = 'context-divider'; line.role = 'separator'; menu.append(line); };
+  action('Undo', 'Ctrl+Z', () => changeHistory(which, 'undo'), !editHistory.canUndo(file));
+  action('Redo', 'Ctrl+Shift+Z', () => changeHistory(which, 'redo'), !editHistory.canRedo(file));
+  divider();
+  action('Cut', 'Ctrl+X', async () => {
+    try { await navigator.clipboard.writeText(editor.value.slice(start, end)); editor.focus(); rememberEdit(which); editor.setRangeText('', start, end, 'start'); editor.dispatchEvent(new Event('input', { bubbles: true })); }
+    catch { showToast('Clipboard access is unavailable.'); }
+  }, start === end);
+  action('Copy', 'Ctrl+C', async () => { try { await navigator.clipboard.writeText(editor.value.slice(start, end)); editor.focus(); } catch { showToast('Clipboard access is unavailable.'); } }, start === end);
+  action('Paste', 'Ctrl+V', async () => {
+    try { const value = await navigator.clipboard.readText(); editor.focus(); rememberEdit(which); editor.setRangeText(value, start, end, 'end'); editor.dispatchEvent(new Event('input', { bubbles: true })); }
+    catch { showToast('Clipboard access is unavailable. Use Ctrl+V instead.'); }
+  });
+  action('Select All', 'Ctrl+A', () => { editor.focus(); editor.select(); });
+  divider();
+  action('Find', 'Ctrl+F', () => showSearch(which));
+  action('Replace', 'Ctrl+H', () => showSearch(which, true));
+  action('Toggle Line Comment', 'Ctrl+/', () => { editor.focus(); editLines(which, 'comment'); });
+  divider();
+  action('Go to Definition', 'F12', () => { editor.focus(); goToDefinition(which, targetOffset); }, !target);
+  action('Find References', 'Shift+F12', () => { editor.focus(); showReferences(which, targetOffset); }, !target);
+  action('Rename Symbol', 'F2', () => { editor.focus(); renameEditorSymbol(which, targetOffset); }, !target);
+  menu.hidden = false;
+  const rect = editor.getBoundingClientRect(), x = event.clientX || rect.left + 36, y = event.clientY || rect.top + 36;
   menu.style.left = `${Math.max(8, Math.min(x, innerWidth - menu.offsetWidth - 8))}px`;
   menu.style.top = `${Math.max(8, Math.min(y, innerHeight - menu.offsetHeight - 8))}px`;
   menu.querySelector('button:not(:disabled)')?.focus();
@@ -314,6 +362,7 @@ function renderTabs(which) {
 }
 function renderCode(which) {
   const pane = panes[which], name = project.panes[which].active;
+  if (pane.renderedFile !== name) { pane.renderedFile = name; pane.navHover = null; pane.peek.hidden = true; pane.editor.classList.remove('navigation-ready'); }
   pane.group.classList.toggle('empty', !name);
   if (!name) { pane.editor.value = ''; pane.highlight.textContent = ''; pane.gutter.textContent = ''; return; }
   const source = project.sourceFiles[name] ?? '';
@@ -321,7 +370,7 @@ function renderCode(which) {
   const errors = problemsByFile[name] || [];
   const searchState = pane.searchState;
   if (searchState && !pane.search.hidden) updateSearch(which, false);
-  pane.highlight.innerHTML = colorize(source, errors, searchState && !pane.search.hidden ? searchState.matches : [], searchState?.current ?? -1);
+  pane.highlight.innerHTML = colorize(source, errors, searchState && !pane.search.hidden ? searchState.matches : [], searchState?.current ?? -1, pane.navHover);
   pane.gutter.innerHTML = Array.from({ length: source.split('\n').length }, (_, i) => `<div class="${errors.some(p => p.line === i + 1) ? 'error-line' : ''}">${i + 1}</div>`).join('');
   pane.highlight.scrollTop = pane.editor.scrollTop; pane.highlight.scrollLeft = pane.editor.scrollLeft; pane.gutter.scrollTop = pane.editor.scrollTop;
 }
@@ -497,6 +546,8 @@ function renameSource(old = activeName()) {
       selectedFiles = selectedFiles.map(k => k === old ? name : k); if (selectionAnchor === old) selectionAnchor = name;
       for (const state of Object.values(project.panes)) { state.tabs = state.tabs.map(k => k === old ? name : k); if (state.active === old) state.active = name; }
       if (problemsByFile[old]) { problemsByFile[name] = problemsByFile[old]; delete problemsByFile[old]; }
+      editHistory.rename(old, name); navigationIndexes.delete(old);
+      if (referenceQuery?.file === old) referenceQuery.file = name;
       if (builtFile === old) builtFile = name;
       renderWorkspace(); scheduleSave();
     } });
@@ -504,7 +555,8 @@ function renameSource(old = activeName()) {
 function removeSources(names) {
   const removing = new Set(names.filter(name => Object.hasOwn(project.sourceFiles, name)));
   if (!removing.size) return;
-  for (const name of removing) { delete project.sourceFiles[name]; delete problemsByFile[name]; }
+  for (const name of removing) { delete project.sourceFiles[name]; delete problemsByFile[name]; editHistory.delete(name); navigationIndexes.delete(name); }
+  if (removing.has(referenceQuery?.file)) referenceQuery = null;
   project.fileOrder = project.fileOrder.filter(name => !removing.has(name));
   selectedFiles = selectedFiles.filter(name => !removing.has(name));
   if (removing.has(selectionAnchor)) selectionAnchor = null;
@@ -595,6 +647,22 @@ function navigateTo(file, start, end = start, remember = true) {
   revealEditorRange(project.activePane, start);
   updateStatus();
 }
+function rememberEdit(which) {
+  const editor = panes[which].editor;
+  panes[which].beforeEdit = { start: editor.selectionStart, end: editor.selectionEnd };
+}
+function changeHistory(which, direction) {
+  const pane = panes[which], file = project.panes[which].active;
+  if (!file) return;
+  const editor = pane.editor, selection = { start: editor.selectionStart, end: editor.selectionEnd };
+  const next = direction === 'undo' ? editHistory.undo(file, editor.value, selection) : editHistory.redo(file, editor.value, selection);
+  if (!next) return;
+  pane.applyingHistory = true; pane.suppressCompletion = true;
+  editor.value = next.text;
+  editor.setSelectionRange(next.start, next.end);
+  editor.dispatchEvent(new Event('input', { bubbles: true }));
+  editor.focus(); revealEditorRange(which, next.start);
+}
 function revealEditorRange(which, start) {
   const editor = panes[which].editor;
   const before = editor.value.slice(0, start), line = before.split('\n').length - 1;
@@ -613,18 +681,100 @@ function revealEditorRange(which, start) {
 }
 function navigationTarget(which, offset = panes[which].editor.selectionStart) {
   const file = project.panes[which].active;
-  return file ? indexSource(project.sourceFiles[file] || '').at(offset) : null;
+  if (!file) return null;
+  const source = project.sourceFiles[file] || '', cached = navigationIndexes.get(file);
+  if (!cached || cached.source !== source) navigationIndexes.set(file, { source, index: indexSource(source) });
+  return navigationIndexes.get(file).index.at(offset);
 }
-function goToDefinition(which, offset) {
+function updateNavigationHover(which, event = null) {
+  const pane = panes[which];
+  if (event?.clientX) pane.lastPointer = { x: event.clientX, y: event.clientY };
+  const point = pane.lastPointer;
+  const target = event && (event.ctrlKey || event.metaKey) && point ? navigationTarget(which, editorOffsetAtPoint(which, point.x, point.y)) : null;
+  const range = target ? [target.token.start, target.token.end] : null;
+  if (pane.navHover?.[0] === range?.[0] && pane.navHover?.[1] === range?.[1]) return;
+  pane.navHover = range;
+  pane.editor.classList.toggle('navigation-ready', !!range);
+  renderCode(which);
+}
+function editorOffsetAtPoint(which, x, y) {
+  const editor = panes[which].editor, source = editor.value, rect = editor.getBoundingClientRect(), style = getComputedStyle(editor);
+  const lineHeight = parseFloat(style.lineHeight) || 22, paddingTop = parseFloat(style.paddingTop) || 0, paddingLeft = parseFloat(style.paddingLeft) || 0;
+  const lines = source.split('\n'), lineNumber = Math.max(0, Math.min(lines.length - 1, Math.floor((y - rect.top + editor.scrollTop - paddingTop) / lineHeight)));
+  const canvas = document.createElement('canvas'), context = canvas.getContext('2d'); context.font = `${style.fontSize} ${style.fontFamily}`;
+  const cell = context.measureText('M').width || 8;
+  const column = Math.max(0, (x - rect.left + editor.scrollLeft - paddingLeft) / cell);
+  let display = 0, index = 0;
+  for (const char of lines[lineNumber]) { const width = char === '\t' ? 2 - display % 2 : 1; if (display + width / 2 >= column) break; display += width; index += char.length; }
+  let offset = index;
+  for (let i = 0; i < lineNumber; i++) offset += lines[i].length + 1;
+  return offset;
+}
+function editorPointForOffset(which, offset) {
+  const editor = panes[which].editor, style = getComputedStyle(editor), before = editor.value.slice(0, offset), lines = before.split('\n');
+  const canvas = document.createElement('canvas'), context = canvas.getContext('2d'); context.font = `${style.fontSize} ${style.fontFamily}`;
+  const cell = context.measureText('M').width || 8;
+  let display = 0; for (const char of lines.at(-1)) display += char === '\t' ? 2 - display % 2 : 1;
+  return { x: (parseFloat(style.paddingLeft) || 0) + display * cell - editor.scrollLeft, y: (parseFloat(style.paddingTop) || 0) + (lines.length - 1) * (parseFloat(style.lineHeight) || 22) - editor.scrollTop };
+}
+function hideReferencePeek(which) { panes[which].peek.hidden = true; }
+function showReferencePeek(which, result, offset = result.token.start) {
+  const pane = panes[which], file = project.panes[which].active, source = project.sourceFiles[file] || '', lines = source.split('\n'), peek = pane.peek;
+  peek.replaceChildren();
+  const head = document.createElement('div'); head.className = 'reference-peek-head';
+  const name = document.createElement('strong'); name.textContent = result.name;
+  const count = document.createElement('span'); count.className = 'reference-peek-count'; count.textContent = `${result.references.length} reference${result.references.length === 1 ? '' : 's'}`;
+  const close = document.createElement('button'); close.type = 'button'; close.title = 'Close references (Esc)'; close.setAttribute('aria-label', 'Close references'); close.textContent = '×'; close.addEventListener('click', () => { hideReferencePeek(which); pane.editor.focus(); });
+  head.append(name, count, close); peek.append(head);
+  const list = document.createElement('div'); list.className = 'reference-peek-list';
+  for (const [index, token] of [result.definition, ...result.references].entries()) {
+    const row = document.createElement('button'); row.type = 'button'; row.className = 'reference-peek-item';
+    const place = document.createElement('span'); place.className = 'peek-location'; place.textContent = `${index ? 'Ref' : 'Def'} · ${token.line}:${token.column}`;
+    const snippet = document.createElement('span'); snippet.className = 'peek-snippet'; snippet.textContent = (lines[token.line - 1] || '').trim();
+    row.append(place, snippet); row.title = `${file}:${token.line}:${token.column} ${snippet.textContent}`;
+    row.addEventListener('click', () => { hideReferencePeek(which); navigateTo(file, token.start, token.end); }); list.append(row);
+  }
+  peek.append(list);
+  const footer = document.createElement('div'); footer.className = 'reference-peek-footer'; footer.textContent = `${file} · click a location to jump · Esc to close`; peek.append(footer);
+  peek.hidden = false;
+  const point = editorPointForOffset(which, offset), layer = pane.editor.parentElement;
+  const below = point.y + 30, top = below + peek.offsetHeight > layer.clientHeight ? Math.max(8, point.y - peek.offsetHeight - 5) : below;
+  peek.style.top = `${Math.max(8, Math.min(top, layer.clientHeight - peek.offsetHeight - 8))}px`;
+  peek.style.left = `${Math.max(8, Math.min(point.x, layer.clientWidth - peek.offsetWidth - 8))}px`;
+}
+function goToDefinition(which, offset, peek = false) {
   const result = navigationTarget(which, offset);
   if (!result) { showToast('No definition found at the cursor.'); return; }
-  navigateTo(project.panes[which].active, result.definition.start, result.definition.end);
+  const file = project.panes[which].active;
+  if (result.token.start !== result.definition.start) navigateTo(file, result.definition.start, result.definition.end);
+  if (peek || result.token.start === result.definition.start) {
+    referenceQuery = { file, offset: result.definition.start };
+    $('references-count').textContent = String(result.references.length);
+    showReferencePeek(which, result, result.definition.start);
+  }
 }
 function showReferences(which, offset) {
   const result = navigationTarget(which, offset);
   if (!result) { showToast('No definition found at the cursor.'); return; }
   referenceQuery = { file: project.panes[which].active, offset: result.definition.start };
-  project.layout.terminalVisible = true; applyLayout(); switchConsole('references');
+  $('references-count').textContent = String(result.references.length);
+  showReferencePeek(which, result, result.token.start);
+  if (activeConsole === 'references') renderConsole();
+}
+function renameEditorSymbol(which, offset = panes[which].editor.selectionStart) {
+  const result = navigationTarget(which, offset);
+  if (!result) { showToast('No symbol found at the cursor.'); return; }
+  const file = project.panes[which].active, original = project.sourceFiles[file], originalName = original.slice(result.definition.start, result.definition.end);
+  showWorkspaceDialog({ title: `Rename ${originalName}`, description: `Change this symbol and its ${result.references.length} reference${result.references.length === 1 ? '' : 's'} in ${file}.`, label: 'New name', value: originalName, submitLabel: 'Rename symbol',
+    validate: name => { try { renameSymbol(original, result, name); return null; } catch (error) { return error.message; } },
+    onSubmit: name => {
+      if (name === originalName) return;
+      const pane = panes[which], editor = pane.editor;
+      rememberEdit(which); editor.value = renameSymbol(original, result, name);
+      const start = result.definition.start; editor.setSelectionRange(start, start + name.length);
+      pane.suppressCompletion = true; editor.dispatchEvent(new Event('input', { bubbles: true })); editor.focus(); revealEditorRange(which, start);
+    },
+  });
 }
 function navigateBack() {
   const previous = navigationHistory.pop();
@@ -736,12 +886,14 @@ function renderCompletions(which) {
 }
 function acceptCompletion(which, index = panes[which].completionData?.selected) {
   const pane = panes[which], data = pane.completionData, item = data?.items[index]; if (!item) return;
+  rememberEdit(which);
   pane.editor.setRangeText(item.insert, data.start, data.end, 'end');
   if (item.select) pane.editor.setSelectionRange(data.start + item.select[0], data.start + item.select[1]);
   hideCompletions(which); pane.suppressCompletion = true; pane.editor.dispatchEvent(new Event('input', { bubbles: true })); pane.editor.focus();
 }
 function editLines(which, action) {
   const editor = panes[which].editor, source = editor.value;
+  rememberEdit(which);
   const originalStart = editor.selectionStart, originalEnd = editor.selectionEnd;
   const first = source.lastIndexOf('\n', editor.selectionStart - 1) + 1;
   const last = editor.selectionEnd > first && source[editor.selectionEnd - 1] === '\n' ? editor.selectionEnd - 1 : editor.selectionEnd;
@@ -757,6 +909,7 @@ function editLines(which, action) {
 }
 function moveLine(which, direction) {
   const editor = panes[which].editor, source = editor.value, start = source.lastIndexOf('\n', editor.selectionStart - 1) + 1;
+  rememberEdit(which);
   const endPos = source.indexOf('\n', editor.selectionEnd), end = endPos < 0 ? source.length : endPos;
   if (direction < 0) {
     if (start === 0) return;
@@ -809,6 +962,7 @@ function replaceSearch(which, all = false) {
   const result = replaceMatches(pane.editor.value, state.matches, pane.replaceInput.value, { regex: state.regex, all, current: state.current });
   if (!result.count) return;
   pane.suppressCompletion = true;
+  rememberEdit(which);
   pane.editor.setRangeText(result.source, 0, pane.editor.value.length, 'end');
   pane.editor.setSelectionRange(result.cursor, result.cursor);
   pane.editor.dispatchEvent(new Event('input', { bubbles: true }));
@@ -837,13 +991,25 @@ for (const which of ['primary', 'secondary']) {
   const pane = panes[which], empty = document.createElement('div'); empty.className = 'editor-empty'; empty.textContent = 'Open a pseudocode file from Explorer'; pane.group.append(empty);
   pane.searchState = { caseSensitive: false, wholeWord: false, regex: false, matches: [], current: -1, error: '' };
   pane.editor.addEventListener('focus', () => setActivePane(which));
-  pane.editor.addEventListener('click', event => { hideCompletions(which); updateStatus(); if ((event.ctrlKey || event.metaKey) && project.panes[which].active) goToDefinition(which, pane.editor.selectionStart); }); pane.editor.addEventListener('keyup', updateStatus);
+  pane.editor.addEventListener('click', event => { hideCompletions(which); updateStatus(); if ((event.ctrlKey || event.metaKey) && project.panes[which].active) goToDefinition(which, pane.editor.selectionStart, true); });
+  pane.editor.addEventListener('mousemove', event => updateNavigationHover(which, event));
+  pane.editor.addEventListener('mouseleave', () => updateNavigationHover(which));
+  pane.editor.addEventListener('keyup', event => { updateStatus(); if (event.key === 'Control' || event.key === 'Meta') updateNavigationHover(which); });
+  pane.editor.addEventListener('contextmenu', event => showEditorContextMenu(event, which));
+  pane.editor.addEventListener('beforeinput', event => {
+    if (event.inputType === 'historyUndo' || event.inputType === 'historyRedo') { event.preventDefault(); changeHistory(which, event.inputType === 'historyUndo' ? 'undo' : 'redo'); }
+    else rememberEdit(which);
+  });
   pane.editor.addEventListener('blur', event => { if (!pane.completion.contains(event.relatedTarget)) hideCompletions(which); });
-  pane.editor.addEventListener('scroll', () => { pane.highlight.scrollTop = pane.editor.scrollTop; pane.highlight.scrollLeft = pane.editor.scrollLeft; pane.gutter.scrollTop = pane.editor.scrollTop; hideCompletions(which); });
-  pane.editor.addEventListener('input', () => {
+  pane.editor.addEventListener('scroll', () => { pane.highlight.scrollTop = pane.editor.scrollTop; pane.highlight.scrollLeft = pane.editor.scrollLeft; pane.gutter.scrollTop = pane.editor.scrollTop; hideCompletions(which); hideReferencePeek(which); });
+  pane.editor.addEventListener('input', event => {
     const name = project.panes[which].active; if (!name) return;
+    const previous = project.sourceFiles[name], next = pane.editor.value;
+    if (!pane.applyingHistory) editHistory.record(name, previous, next, pane.beforeEdit || { start: pane.editor.selectionStart, end: pane.editor.selectionEnd }, event.isTrusted && ['insertText', 'deleteContentBackward'].includes(event.inputType) ? event.inputType : '');
+    pane.applyingHistory = false; pane.beforeEdit = null;
     if (waitingInput?.session.filename === name) { runToken++; waitingInput = null; log('Run cancelled after source edit.', 'meta'); }
-    project.sourceFiles[name] = pane.editor.value; if (builtFile === name) { lastCompiled = null; builtSource = null; }
+    project.sourceFiles[name] = next; if (builtFile === name) { lastCompiled = null; builtSource = null; }
+    hideReferencePeek(which); pane.navHover = null; pane.editor.classList.remove('navigation-ready');
     renderCode(which); renderCode(which === 'primary' ? 'secondary' : 'primary'); updateStatus(); scheduleSave();
     if (activeConsole === 'references' && referenceQuery?.file === name) renderConsole();
     clearTimeout(diagnoseTimer); diagnoseTimer = setTimeout(() => diagnose(name), 250);
@@ -851,7 +1017,13 @@ for (const which of ['primary', 'secondary']) {
   });
   pane.editor.addEventListener('keydown', event => {
     const data = pane.completionData;
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') { event.preventDefault(); changeHistory(which, event.shiftKey ? 'redo' : 'undo'); return; }
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'y') { event.preventDefault(); changeHistory(which, 'redo'); return; }
+    if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) { showEditorContextMenu(event, which); return; }
+    if (event.key === 'Escape' && !pane.peek.hidden) { event.preventDefault(); hideReferencePeek(which); return; }
+    if (event.key === 'Control' || event.key === 'Meta') updateNavigationHover(which, { ctrlKey: true });
     if (event.key === 'F12') { event.preventDefault(); hideCompletions(which); if (event.shiftKey) showReferences(which); else goToDefinition(which); return; }
+    if (event.key === 'F2') { event.preventDefault(); hideCompletions(which); renameEditorSymbol(which); return; }
     if (event.altKey && event.key === 'ArrowLeft') { event.preventDefault(); navigateBack(); return; }
     if (data && ['ArrowDown', 'ArrowUp'].includes(event.key)) { event.preventDefault(); data.selected = (data.selected + (event.key === 'ArrowDown' ? 1 : -1) + Math.min(12, data.items.length)) % Math.min(12, data.items.length); renderCompletions(which); return; }
     if (data && ['Tab', 'Enter'].includes(event.key)) { event.preventDefault(); acceptCompletion(which); return; }
@@ -860,11 +1032,11 @@ for (const which of ['primary', 'secondary']) {
     if ((event.ctrlKey || event.metaKey) && event.key === '/') { event.preventDefault(); hideCompletions(which); editLines(which, 'comment'); return; }
     if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'k') { event.preventDefault(); hideCompletions(which); editLines(which, 'delete'); return; }
     if (event.altKey && ['ArrowUp', 'ArrowDown'].includes(event.key)) { event.preventDefault(); hideCompletions(which); moveLine(which, event.key === 'ArrowUp' ? -1 : 1); return; }
-    if (event.key === 'Tab' && !event.ctrlKey && !event.metaKey) { event.preventDefault(); hideCompletions(which); if (event.shiftKey) editLines(which, 'outdent'); else if (pane.editor.value.slice(pane.editor.selectionStart, pane.editor.selectionEnd).includes('\n')) editLines(which, 'indent'); else { pane.editor.setRangeText('  ', pane.editor.selectionStart, pane.editor.selectionEnd, 'end'); pane.editor.dispatchEvent(new Event('input')); } return; }
-    if (event.key === 'Enter') { const before = pane.editor.value.slice(0, pane.editor.selectionStart), indent = before.slice(before.lastIndexOf('\n') + 1).match(/^\s*/)[0]; if (indent) { event.preventDefault(); pane.editor.setRangeText('\n' + indent, pane.editor.selectionStart, pane.editor.selectionEnd, 'end'); pane.editor.dispatchEvent(new Event('input')); } }
+    if (event.key === 'Tab' && !event.ctrlKey && !event.metaKey) { event.preventDefault(); hideCompletions(which); if (event.shiftKey) editLines(which, 'outdent'); else if (pane.editor.value.slice(pane.editor.selectionStart, pane.editor.selectionEnd).includes('\n')) editLines(which, 'indent'); else { rememberEdit(which); pane.editor.setRangeText('  ', pane.editor.selectionStart, pane.editor.selectionEnd, 'end'); pane.editor.dispatchEvent(new Event('input')); } return; }
+    if (event.key === 'Enter') { const before = pane.editor.value.slice(0, pane.editor.selectionStart), indent = before.slice(before.lastIndexOf('\n') + 1).match(/^\s*/)[0]; if (indent) { event.preventDefault(); rememberEdit(which); pane.editor.setRangeText('\n' + indent, pane.editor.selectionStart, pane.editor.selectionEnd, 'end'); pane.editor.dispatchEvent(new Event('input')); } }
   });
   pane.searchInput.addEventListener('input', () => updateSearch(which));
-  pane.searchInput.addEventListener('keydown', event => { if (event.key === 'Escape') { pane.search.hidden = true; renderCode(which); pane.editor.focus(); } else if (event.key === 'Enter' || event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); findNext(which, event.shiftKey || event.key === 'ArrowUp', event.key === 'Enter'); } });
+  pane.searchInput.addEventListener('keydown', event => { if (event.key === 'Escape') { pane.search.hidden = true; renderCode(which); pane.editor.focus(); } else if (event.key === 'Enter' || event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); findNext(which, event.shiftKey || event.key === 'ArrowUp', false); } });
   pane.replaceInput.addEventListener('keydown', event => { if (event.key === 'Escape') { pane.search.hidden = true; pane.editor.focus(); } else if (event.key === 'Enter') { event.preventDefault(); pane.search.querySelector('[data-search-action="replace"]').click(); } });
   pane.search.addEventListener('click', event => {
     const option = event.target.closest('[data-search-option]')?.dataset.searchOption;

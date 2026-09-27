@@ -77,3 +77,20 @@ html,body{height:100%;overflow:hidden}.app{height:100vh;min-height:0;overflow:hi
 .source-item.selected:hover{background:#365e63}
 .sidebar-file-actions button[hidden]{display:none}
 .sidebar-file-actions button:disabled{color:#596d78;cursor:default}
+.code-editor.navigation-ready{cursor:pointer}
+.code-highlight .navigation-link{text-decoration:underline solid #8be7d3 1.5px;text-underline-offset:4px;background:#59bfab29}
+.editor-context-menu button.menu-action{display:flex;align-items:center;justify-content:space-between;gap:22px}
+.menu-shortcut{color:#8298a7;font:11px var(--mono)}
+.reference-peek{position:absolute;z-index:10;width:min(440px,calc(100% - 20px));max-height:min(330px,65%);display:flex;flex-direction:column;overflow:hidden;border:1px solid #577b83;border-radius:7px;background:#1c2a35;box-shadow:0 18px 38px #000b;color:#deebef;font:12px var(--sans)}
+.reference-peek[hidden]{display:none}
+.reference-peek-head{display:flex;align-items:center;gap:8px;padding:10px 11px;border-bottom:1px solid #3b515d;background:#21343e}
+.reference-peek-head strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#96e8d7;font:700 13px var(--mono)}
+.reference-peek-count{color:#9eb3c1;white-space:nowrap;font-size:11px}
+.reference-peek-head button{margin-left:auto;width:22px;height:22px;border:0;border-radius:4px;background:transparent;color:#adbfca;font-size:17px;line-height:1}
+.reference-peek-head button:hover{background:#36515b;color:#fff}
+.reference-peek-list{min-height:0;overflow:auto;padding:4px}
+.reference-peek-item{display:grid;grid-template-columns:78px minmax(0,1fr);gap:8px;width:100%;border:0;border-radius:4px;padding:7px 8px;text-align:left;background:transparent;color:#d6e4ea;font:12px var(--mono)}
+.reference-peek-item:hover,.reference-peek-item:focus-visible{background:#34555d;outline:none}
+.reference-peek-item .peek-location{color:#8fd9cb;white-space:nowrap}
+.reference-peek-item .peek-snippet{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.reference-peek-footer{padding:7px 11px;border-top:1px solid #354b56;color:#819aa8;font-size:10px}
