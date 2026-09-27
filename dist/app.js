@@ -3,6 +3,7 @@ import { createRuntime } from './src/runtime.js';
 import { advancedExamples } from './examples.js';
 import { compileSelfHostedInBrowser } from './selfhost.js';
 import { completions, diagnosticRange } from './editor-intelligence.js';
+import { selectExplorerFiles, moveExplorerFiles } from './explorer-selection.js';
 
 const $ = id => document.getElementById(id);
 const app = document.querySelector('.app');
@@ -48,6 +49,7 @@ let project = normalizeProject(saved);
 let selectedDataFile = null, lastCompiled = null, builtFile = null, builtSource = null, buildInfo = null;
 let problemsByFile = {}, activeConsole = 'output', consoleLines = [], waitingInput = null, runToken = 0, saveTimer = null, diagnoseTimer = null;
 let draggedFile = null;
+let selectedFiles = [], selectionAnchor = null;
 
 const activeName = () => project.panes[project.activePane].active;
 const activeSource = () => project.sourceFiles[activeName()] ?? '';
@@ -132,12 +134,51 @@ function closeTabsToRight(which, name) {
 function duplicateSource(name, which = project.activePane) {
   const copy = uniqueFilename(name); project.sourceFiles[copy] = project.sourceFiles[name];
   project.fileOrder = insertFileAt(project.fileOrder, copy, name, true);
+  selectedFiles = [copy]; selectionAnchor = copy;
   openSource(copy, which);
+}
+function selectedSourceNames() { return project.fileOrder.filter(name => selectedFiles.includes(name) && Object.hasOwn(project.sourceFiles, name)); }
+function selectSource(name, options = {}) {
+  const next = selectExplorerFiles(project.fileOrder, selectedFiles, selectionAnchor || activeName(), name, options);
+  selectedFiles = next.selected; selectionAnchor = next.anchor;
+  updateExplorerSelection();
+}
+function updateExplorerSelection() {
+  document.querySelectorAll('#source-list .source-item').forEach(item => {
+    const selected = selectedFiles.includes(item.dataset.file);
+    item.classList.toggle('selected', selected);
+    item.setAttribute('aria-pressed', String(selected));
+  });
+  const count = selectedSourceNames().length;
+  $('source-drag-hint').textContent = count > 1 ? `${count} files selected · drag together or use the actions below` : 'Ctrl+click to select many · Shift+click for a range';
+  $('open-selected').hidden = count < 2;
+  $('rename-source').disabled = count > 1;
+  $('delete-source').textContent = count > 1 ? `Delete ${count}` : 'Delete';
+}
+function openSources(names, which = project.activePane, active = names.at(-1)) {
+  names = names.filter(name => Object.hasOwn(project.sourceFiles, name));
+  if (!names.length) return;
+  if (which === 'secondary') project.split = true;
+  const state = project.panes[which];
+  for (const name of names) if (!state.tabs.includes(name)) state.tabs.push(name);
+  state.active = names.includes(active) ? active : names.at(-1);
+  project.activePane = which;
+  renderWorkspace(); scheduleSave(); panes[which].editor.focus();
+}
+function duplicateSources(names) {
+  const copies = [];
+  for (const name of names) {
+    const copy = uniqueFilename(name); project.sourceFiles[copy] = project.sourceFiles[name];
+    project.fileOrder = insertFileAt(project.fileOrder, copy, name, true); copies.push(copy);
+  }
+  selectedFiles = copies; selectionAnchor = copies[0] || null;
+  openSources(copies);
 }
 function downloadSource(name) { downloadBlob(new Blob([project.sourceFiles[name]], { type: 'text/plain;charset=utf-8' }), name); }
 function showFileContextMenu(event, name, which = null) {
   if (!Object.hasOwn(project.sourceFiles, name)) return;
   event.preventDefault(); event.stopPropagation(); hideContextMenu();
+  if (!which && !selectedFiles.includes(name)) selectSource(name);
   const menu = $('editor-context-menu'); menu._invoker = event.currentTarget;
   const addAction = (label, action, { danger = false, disabled = false } = {}) => {
     const button = document.createElement('button'); button.type = 'button'; button.role = 'menuitem'; button.textContent = label;
@@ -145,6 +186,15 @@ function showFileContextMenu(event, name, which = null) {
     button.addEventListener('click', () => { hideContextMenu(true); action(); }); menu.append(button);
   };
   const divider = () => { const line = document.createElement('div'); line.className = 'context-divider'; line.role = 'separator'; menu.append(line); };
+  const selection = !which ? selectedSourceNames() : [];
+  if (selection.length > 1) {
+    addAction(`Open ${selection.length} Selected`, () => openSources(selection));
+    addAction('Open Selected to Side', () => openSources(selection, project.activePane === 'primary' ? 'secondary' : 'primary'));
+    divider();
+    addAction('Duplicate Selected', () => duplicateSources(selection));
+    divider();
+    addAction(`Delete ${selection.length} Selected`, () => deleteSources(selection), { danger: true });
+  } else {
   if (which) {
     const tabs = project.panes[which].tabs, index = tabs.indexOf(name);
     addAction('Close', () => closeTab(which, name));
@@ -159,6 +209,7 @@ function showFileContextMenu(event, name, which = null) {
   addAction('Download .pseudo', () => downloadSource(name));
   divider();
   addAction('Delete', () => deleteSource(name), { danger: true });
+  }
   menu.hidden = false;
   const anchor = event.currentTarget.getBoundingClientRect(), x = event.clientX || anchor.left + 16, y = event.clientY || anchor.bottom;
   menu.style.left = `${Math.max(8, Math.min(x, innerWidth - menu.offsetWidth - 8))}px`;
@@ -206,19 +257,31 @@ function renderExplorer() {
   const list = $('source-list'); list.replaceChildren();
   project.fileOrder = [...new Set([...project.fileOrder, ...Object.keys(project.sourceFiles)])].filter(name => Object.hasOwn(project.sourceFiles, name));
   const names = project.fileOrder;
+  selectedFiles = selectedFiles.filter(name => names.includes(name));
+  if (selectionAnchor && !names.includes(selectionAnchor)) selectionAnchor = null;
   $('source-count').textContent = String(names.length).padStart(2, '0');
   for (const name of names) {
-    const item = document.createElement('button'); item.className = `source-item${name === activeName() ? ' active' : ''}`; item.title = `Open ${name}. Drag to reorder or open in an editor. Alt-click to open in the other editor.`; item.draggable = true; item.dataset.file = name;
+    const item = document.createElement('button'); item.className = `source-item${name === activeName() ? ' active' : ''}`; item.title = `Open ${name}. Ctrl+click to toggle selection, Shift+click to select a range. Drag selected files together.`; item.draggable = true; item.dataset.file = name;
     const glyph = document.createElement('span'); glyph.className = 'file-glyph'; glyph.textContent = '◇';
     const label = document.createElement('span'); label.className = 'source-item-name'; label.textContent = name;
     item.append(glyph, label);
     if (project.panes.primary.tabs.includes(name) || project.panes.secondary.tabs.includes(name)) { const dot = document.createElement('span'); dot.className = 'open-indicator'; dot.textContent = '●'; item.append(dot); }
-    item.addEventListener('click', event => openSource(name, event.altKey ? (project.activePane === 'primary' ? 'secondary' : 'primary') : project.activePane));
+    item.addEventListener('click', event => {
+      if (event.ctrlKey || event.metaKey || event.shiftKey) { selectSource(name, { shift: event.shiftKey, toggle: event.ctrlKey || event.metaKey }); return; }
+      selectSource(name);
+      openSource(name, event.altKey ? (project.activePane === 'primary' ? 'secondary' : 'primary') : project.activePane);
+    });
     item.addEventListener('contextmenu', event => showFileContextMenu(event, name));
-    item.addEventListener('keydown', event => { if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) showFileContextMenu(event, name); });
+    item.addEventListener('keydown', event => {
+      if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) showFileContextMenu(event, name);
+      else if (event.key === 'Escape') { event.preventDefault(); selectedFiles = []; selectionAnchor = null; updateExplorerSelection(); }
+      else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a') { event.preventDefault(); selectedFiles = [...project.fileOrder]; selectionAnchor = name; updateExplorerSelection(); }
+      else if (event.key === ' ' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); selectSource(name, { toggle: true }); }
+    });
     item.addEventListener('dragstart', event => beginFileDrag(event, name, null));
     list.append(item);
   }
+  updateExplorerSelection();
 }
 function renderTabs(which) {
   const state = project.panes[which], root = panes[which].tabs; root.replaceChildren();
@@ -291,9 +354,11 @@ function insertFileAt(list, name, target, after) {
 }
 function beginFileDrag(event, name, fromPane) {
   if (!event.dataTransfer || !Object.hasOwn(project.sourceFiles, name)) return;
-  draggedFile = { name, fromPane };
+  if (!fromPane && !selectedFiles.includes(name)) selectSource(name);
+  const names = fromPane ? [name] : selectedSourceNames();
+  draggedFile = { name, names, fromPane };
   event.dataTransfer.effectAllowed = 'move';
-  event.dataTransfer.setData('text/plain', name);
+  event.dataTransfer.setData('text/plain', names.join('\n'));
   event.currentTarget.classList.add('dragging-source');
   $('editor-area').classList.add('dragging-file');
 }
@@ -323,6 +388,18 @@ function placeFileInEditor(name, which, target = null, after = true, fromPane = 
   else if (fromPane === 'secondary' && !project.panes.secondary.tabs.length) project.split = false;
   renderWorkspace(); scheduleSave();
 }
+function placeFilesInEditor(names, which, active, target = null, after = true) {
+  names = project.fileOrder.filter(name => names.includes(name) && Object.hasOwn(project.sourceFiles, name));
+  if (!names.length) return;
+  const destination = project.panes[which];
+  destination.tabs = destination.tabs.filter(name => !names.includes(name));
+  const targetIndex = target ? destination.tabs.indexOf(target) : -1;
+  destination.tabs.splice(targetIndex < 0 ? destination.tabs.length : targetIndex + Number(after), 0, ...names);
+  destination.active = names.includes(active) ? active : names.at(-1);
+  project.activePane = which;
+  if (which === 'secondary') project.split = true;
+  renderWorkspace(); scheduleSave(); panes[which].editor.focus();
+}
 function editorDropPosition(event) {
   const tab = event.target.closest('.source-tab');
   const group = event.target.closest('.editor-group');
@@ -347,7 +424,7 @@ function installFileDragTargets() {
     if (!draggedFile) return;
     event.preventDefault();
     const item = event.target.closest('.source-item'), rect = item?.getBoundingClientRect();
-    project.fileOrder = insertFileAt(project.fileOrder, draggedFile.name, item?.dataset.file, rect ? event.clientY >= rect.top + rect.height / 2 : true);
+    project.fileOrder = moveExplorerFiles(project.fileOrder, draggedFile.names, item?.dataset.file, rect ? event.clientY >= rect.top + rect.height / 2 : true);
     endFileDrag(); renderExplorer(); scheduleSave();
   });
   area.addEventListener('dragover', event => {
@@ -361,8 +438,10 @@ function installFileDragTargets() {
   area.addEventListener('drop', event => {
     if (!draggedFile) return;
     event.preventDefault();
-    const position = editorDropPosition(event), { name, fromPane } = draggedFile;
-    endFileDrag(); placeFileInEditor(name, position.which, position.target, position.after, fromPane);
+    const position = editorDropPosition(event), { name, names, fromPane } = draggedFile;
+    endFileDrag();
+    if (fromPane) placeFileInEditor(name, position.which, position.target, position.after, fromPane);
+    else placeFilesInEditor(names, position.which, name, position.target, position.after);
   });
   document.addEventListener('dragend', endFileDrag);
 }
@@ -391,7 +470,7 @@ function uniqueFilename(name) {
 function newSource() {
   showWorkspaceDialog({ title: 'New pseudocode file', description: 'Create a file in this workspace.', label: 'Filename', value: 'untitled.pseudo', submitLabel: 'Create file',
     validate: name => !validFilename(name) ? 'Enter a filename ending in .pseudo.' : Object.hasOwn(project.sourceFiles, name) ? 'A file with this name already exists.' : null,
-    onSubmit: name => { project.sourceFiles[name] = ''; openSource(name); } });
+    onSubmit: name => { project.sourceFiles[name] = ''; selectedFiles = [name]; selectionAnchor = name; openSource(name); } });
 }
 function renameSource(old = activeName()) {
   if (!old || !Object.hasOwn(project.sourceFiles, old)) return;
@@ -401,25 +480,37 @@ function renameSource(old = activeName()) {
       if (name === old) return;
       const entries = Object.entries(project.sourceFiles).map(([k, v]) => [k === old ? name : k, v]); project.sourceFiles = Object.fromEntries(entries);
       project.fileOrder = project.fileOrder.map(k => k === old ? name : k);
+      selectedFiles = selectedFiles.map(k => k === old ? name : k); if (selectionAnchor === old) selectionAnchor = name;
       for (const state of Object.values(project.panes)) { state.tabs = state.tabs.map(k => k === old ? name : k); if (state.active === old) state.active = name; }
       if (problemsByFile[old]) { problemsByFile[name] = problemsByFile[old]; delete problemsByFile[old]; }
       if (builtFile === old) builtFile = name;
       renderWorkspace(); scheduleSave();
     } });
 }
-function removeSource(name) {
-  delete project.sourceFiles[name]; delete problemsByFile[name];
-  project.fileOrder = project.fileOrder.filter(k => k !== name);
-  for (const state of Object.values(project.panes)) { state.tabs = state.tabs.filter(k => k !== name); if (state.active === name) state.active = state.tabs.at(-1) || null; }
-  if (builtFile === name) { builtFile = null; builtSource = null; lastCompiled = null; }
+function removeSources(names) {
+  const removing = new Set(names.filter(name => Object.hasOwn(project.sourceFiles, name)));
+  if (!removing.size) return;
+  for (const name of removing) { delete project.sourceFiles[name]; delete problemsByFile[name]; }
+  project.fileOrder = project.fileOrder.filter(name => !removing.has(name));
+  selectedFiles = selectedFiles.filter(name => !removing.has(name));
+  if (removing.has(selectionAnchor)) selectionAnchor = null;
+  for (const state of Object.values(project.panes)) { state.tabs = state.tabs.filter(name => !removing.has(name)); if (removing.has(state.active)) state.active = state.tabs.at(-1) || null; }
+  if (removing.has(builtFile)) { builtFile = null; builtSource = null; lastCompiled = null; }
   if (project.split && !project.panes.secondary.tabs.length) project.split = false;
   if (!Object.keys(project.sourceFiles).length) { project.sourceFiles['main.pseudo'] = ''; project.panes.primary.tabs = ['main.pseudo']; project.panes.primary.active = 'main.pseudo'; }
   if (!project.panes[project.activePane].active || (project.activePane === 'secondary' && !project.split)) project.activePane = 'primary';
   renderWorkspace(); scheduleSave();
 }
+function removeSource(name) { removeSources([name]); }
 function deleteSource(name = activeName()) {
   if (!name || !Object.hasOwn(project.sourceFiles, name)) return;
   showWorkspaceDialog({ title: 'Delete file', description: `Delete ${name} from this workspace? This removes its saved source code.`, submitLabel: 'Delete file', danger: true, onSubmit: () => removeSource(name) });
+}
+function deleteSources(names) {
+  names = names.filter(name => Object.hasOwn(project.sourceFiles, name));
+  if (names.length === 1) { deleteSource(names[0]); return; }
+  if (!names.length) return;
+  showWorkspaceDialog({ title: `Delete ${names.length} files`, description: `Delete ${names.join(', ')} from this workspace? Their saved source code will be removed.`, submitLabel: `Delete ${names.length} files`, danger: true, onSubmit: () => removeSources(names) });
 }
 function setProblems(name, items) {
   if (name) problemsByFile[name] = items;
@@ -674,7 +765,10 @@ $('add-file').addEventListener('click', () => showWorkspaceDialog({ title: 'New 
   onSubmit: name => { project.files[name] = ''; selectedDataFile = name; renderDataFiles(); save(); } }));
 $('remove-file').addEventListener('click', () => { const name = selectedDataFile; if (!name) return; showWorkspaceDialog({ title: 'Delete virtual file', description: `Delete ${name} from this workspace?`, submitLabel: 'Delete file', danger: true,
   onSubmit: () => { delete project.files[name]; selectedDataFile = null; renderDataFiles(); save(); } }); });
-$('new-source').addEventListener('click', newSource); $('rename-source').addEventListener('click', () => renameSource()); $('delete-source').addEventListener('click', () => deleteSource());
+$('new-source').addEventListener('click', newSource);
+$('open-selected').addEventListener('click', () => openSources(selectedSourceNames()));
+$('rename-source').addEventListener('click', () => renameSource(selectedSourceNames()[0] || activeName()));
+$('delete-source').addEventListener('click', () => { const names = selectedSourceNames(); if (names.length) deleteSources(names); else deleteSource(); });
 $('import-source').addEventListener('click', () => $('import-file').click()); $('import-button').addEventListener('click', () => $('import-file').click());
 $('import-file').addEventListener('change', async event => {
   const files = [...event.target.files]; if (!files.length) return;
