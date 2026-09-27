@@ -5,6 +5,7 @@ import { compileSelfHostedInBrowser } from './selfhost.js';
 import { completions, diagnosticRange } from './editor-intelligence.js';
 import { selectExplorerFiles, moveExplorerFiles } from './explorer-selection.js';
 import { findMatches, replaceMatches } from './editor-search.js';
+import { indexSource } from './editor-navigation.js';
 
 const $ = id => document.getElementById(id);
 const app = document.querySelector('.app');
@@ -51,6 +52,8 @@ let selectedDataFile = null, lastCompiled = null, builtFile = null, builtSource 
 let problemsByFile = {}, activeConsole = 'output', consoleLines = [], waitingInput = null, runToken = 0, saveTimer = null, diagnoseTimer = null;
 let draggedFile = null;
 let selectedFiles = [], selectionAnchor = null;
+let referenceQuery = null;
+const navigationHistory = [];
 
 const activeName = () => project.panes[project.activePane].active;
 const activeSource = () => project.sourceFiles[activeName()] ?? '';
@@ -536,6 +539,7 @@ function diagnose(name) {
 function log(text, kind = 'line') { consoleLines.push({ text, kind }); $('output-count').textContent = consoleLines.filter(x => x.kind === 'line').length; if (activeConsole === 'output') renderConsole(); }
 function renderConsole() {
   consoleContent.replaceChildren();
+  if (activeConsole === 'references') $('references-count').textContent = '0';
   if (activeConsole === 'output') {
     if (!consoleLines.length && !waitingInput) { const empty = document.createElement('div'); empty.className = 'empty-console'; empty.innerHTML = '<span class="terminal-glyph">›_</span><span>Run a source file to see output here.</span>'; consoleContent.append(empty); return; }
     for (const item of consoleLines) { const row = document.createElement('div'); row.className = item.kind === 'error' ? 'console-line console-error' : item.kind === 'meta' ? 'console-meta' : item.kind === 'input' ? 'console-line console-input' : 'console-line'; row.textContent = item.text; consoleContent.append(row); }
@@ -553,6 +557,26 @@ function renderConsole() {
     const issues = problemsByFile[activeName()] || [];
     if (!issues.length) { const row = document.createElement('div'); row.className = 'console-meta'; row.textContent = 'No problems in the active file.'; consoleContent.append(row); }
     for (const issue of issues) { const row = document.createElement('div'); row.className = 'problem-item'; const loc = document.createElement('strong'); loc.textContent = `Ln ${issue.line}:${issue.column}`; row.append(loc, document.createTextNode(issue.message)); consoleContent.append(row); }
+  } else if (activeConsole === 'references') {
+    if (!referenceQuery || !Object.hasOwn(project.sourceFiles, referenceQuery.file)) {
+      const empty = document.createElement('div'); empty.className = 'console-meta'; empty.textContent = 'Place the cursor on a symbol and press Shift+F12 to find its references.'; consoleContent.append(empty);
+    } else {
+      const source = project.sourceFiles[referenceQuery.file], sourceLines = source.split('\n'), result = indexSource(source).at(referenceQuery.offset);
+      if (!result) { const empty = document.createElement('div'); empty.className = 'console-meta'; empty.textContent = 'No definition found for this symbol.'; consoleContent.append(empty); }
+      else {
+        $('references-count').textContent = String(result.references.length);
+        const heading = document.createElement('div'); heading.className = 'references-heading'; heading.textContent = `${result.name} · ${result.references.length} reference${result.references.length === 1 ? '' : 's'}`; consoleContent.append(heading);
+        const addLocation = (token, label) => {
+          const line = sourceLines[token.line - 1] || '';
+          const button = document.createElement('button'); button.type = 'button'; button.className = 'reference-item';
+          const place = document.createElement('span'); place.className = 'reference-place'; place.textContent = `${referenceQuery.file}:${token.line}:${token.column}`;
+          const snippet = document.createElement('span'); snippet.className = 'reference-snippet'; snippet.textContent = `${label}  ${line.trim()}`;
+          button.append(place, snippet); button.addEventListener('click', () => navigateTo(referenceQuery.file, token.start, token.end)); consoleContent.append(button);
+        };
+        addLocation(result.definition, 'Definition');
+        for (const token of result.references) addLocation(token, 'Reference');
+      }
+    }
   } else {
     const info = document.createElement('div'); info.className = 'build-log';
     if (buildInfo) info.innerHTML = `<strong>${escape(buildInfo.name)} · self-hosted build succeeded</strong><br>WebAssembly module: ${buildInfo.size.toLocaleString()} bytes<br>Routines: ${buildInfo.routines}<br>Imports: ${buildInfo.imports}<br>Compiled in ${buildInfo.ms.toFixed(1)} ms`;
@@ -562,6 +586,36 @@ function renderConsole() {
   }
 }
 function switchConsole(tab) { activeConsole = tab; document.querySelectorAll('[data-console-tab]').forEach(button => button.classList.toggle('active', button.dataset.consoleTab === tab)); renderConsole(); }
+function navigateTo(file, start, end = start, remember = true) {
+  if (!Object.hasOwn(project.sourceFiles, file)) return;
+  if (remember && activeName()) navigationHistory.push({ file: activeName(), offset: panes[project.activePane].editor.selectionStart });
+  openSource(file);
+  const editor = panes[project.activePane].editor;
+  editor.setSelectionRange(start, end);
+  const line = editor.value.slice(0, start).split('\n').length - 1;
+  const target = line * 24 - editor.clientHeight / 3;
+  if (target < editor.scrollTop || target > editor.scrollTop + editor.clientHeight - 48) editor.scrollTop = Math.max(0, target);
+  updateStatus();
+}
+function navigationTarget(which, offset = panes[which].editor.selectionStart) {
+  const file = project.panes[which].active;
+  return file ? indexSource(project.sourceFiles[file] || '').at(offset) : null;
+}
+function goToDefinition(which, offset) {
+  const result = navigationTarget(which, offset);
+  if (!result) { showToast('No definition found at the cursor.'); return; }
+  navigateTo(project.panes[which].active, result.definition.start, result.definition.end);
+}
+function showReferences(which, offset) {
+  const result = navigationTarget(which, offset);
+  if (!result) { showToast('No definition found at the cursor.'); return; }
+  referenceQuery = { file: project.panes[which].active, offset: result.definition.start };
+  project.layout.terminalVisible = true; applyLayout(); switchConsole('references');
+}
+function navigateBack() {
+  const previous = navigationHistory.pop();
+  if (previous) navigateTo(previous.file, previous.offset, previous.offset, false);
+}
 async function build() {
   const name = activeName(); if (!name) { log('Open a source file before compiling.', 'error'); return null; }
   const source = activeSource(), start = performance.now();
@@ -768,7 +822,7 @@ for (const which of ['primary', 'secondary']) {
   const pane = panes[which], empty = document.createElement('div'); empty.className = 'editor-empty'; empty.textContent = 'Open a pseudocode file from Explorer'; pane.group.append(empty);
   pane.searchState = { caseSensitive: false, wholeWord: false, regex: false, matches: [], current: -1, error: '' };
   pane.editor.addEventListener('focus', () => setActivePane(which));
-  pane.editor.addEventListener('click', () => { hideCompletions(which); updateStatus(); }); pane.editor.addEventListener('keyup', updateStatus);
+  pane.editor.addEventListener('click', event => { hideCompletions(which); updateStatus(); if ((event.ctrlKey || event.metaKey) && project.panes[which].active) goToDefinition(which, pane.editor.selectionStart); }); pane.editor.addEventListener('keyup', updateStatus);
   pane.editor.addEventListener('blur', event => { if (!pane.completion.contains(event.relatedTarget)) hideCompletions(which); });
   pane.editor.addEventListener('scroll', () => { pane.highlight.scrollTop = pane.editor.scrollTop; pane.highlight.scrollLeft = pane.editor.scrollLeft; pane.gutter.scrollTop = pane.editor.scrollTop; hideCompletions(which); });
   pane.editor.addEventListener('input', () => {
@@ -776,11 +830,14 @@ for (const which of ['primary', 'secondary']) {
     if (waitingInput?.session.filename === name) { runToken++; waitingInput = null; log('Run cancelled after source edit.', 'meta'); }
     project.sourceFiles[name] = pane.editor.value; if (builtFile === name) { lastCompiled = null; builtSource = null; }
     renderCode(which); renderCode(which === 'primary' ? 'secondary' : 'primary'); updateStatus(); scheduleSave();
+    if (activeConsole === 'references' && referenceQuery?.file === name) renderConsole();
     clearTimeout(diagnoseTimer); diagnoseTimer = setTimeout(() => diagnose(name), 250);
     if (pane.suppressCompletion) pane.suppressCompletion = false; else showCompletions(which);
   });
   pane.editor.addEventListener('keydown', event => {
     const data = pane.completionData;
+    if (event.key === 'F12') { event.preventDefault(); hideCompletions(which); if (event.shiftKey) showReferences(which); else goToDefinition(which); return; }
+    if (event.altKey && event.key === 'ArrowLeft') { event.preventDefault(); navigateBack(); return; }
     if (data && ['ArrowDown', 'ArrowUp'].includes(event.key)) { event.preventDefault(); data.selected = (data.selected + (event.key === 'ArrowDown' ? 1 : -1) + Math.min(12, data.items.length)) % Math.min(12, data.items.length); renderCompletions(which); return; }
     if (data && ['Tab', 'Enter'].includes(event.key)) { event.preventDefault(); acceptCompletion(which); return; }
     if (event.key === 'Escape' && data) { event.preventDefault(); hideCompletions(which); return; }
