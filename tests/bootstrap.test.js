@@ -7,6 +7,16 @@ import { advancedExamples } from '../web/examples.js';
 
 const bootstrapped = bootstrap();
 
+test('all packaged compiler stages execute as native self-hosted WASM', async () => {
+  const compiler = await loadSelfHostedCompiler();
+  for (const stage of [compiler, compiler.assembler, compiler.nativeLowerer]) {
+    assert.equal(stage.native, true);
+    assert.equal(stage.nativeBackend, 'selfhosted');
+    const imports = WebAssembly.Module.imports(new WebAssembly.Module(stage.binary)).map(item => item.name);
+    assert.equal(imports.some(name => ['get', 'set', 'index', 'field', 'binary', 'call'].includes(name)), false);
+  }
+});
+
 test('the packaged self-hosted compiler reads virtual text files', async () => {
   const compiler = await loadSelfHostedCompiler();
   const source = `DECLARE i : STRING

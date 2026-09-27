@@ -1,6 +1,6 @@
 # Pseudo2Wasm
 
-A dependency-free compiler and browser IDE for Cambridge International AS & A Level Computer Science (9618) pseudocode. The browser compiles source with three self-hosted WebAssembly compiler stages written in pseudocode. Eligible programs use native WASM lowering: scalar variables, arrays, records, arithmetic, control flow, routine frames, and `BYREF` addresses run in WASM memory. Strings are memory-backed too; concatenation and equality execute in WASM. JavaScript handles input/output and selected built-ins. Other language features continue through the self-hosted compatibility backend.
+A dependency-free compiler and browser IDE for Cambridge International AS & A Level Computer Science (9618) pseudocode. The browser compiles source with three native WebAssembly compiler stages written in pseudocode. Those stages compile and rebuild themselves. Eligible programs use native WASM lowering: scalar variables, arrays, records, arithmetic, control flow, routine frames, and `BYREF` addresses run in WASM memory. Strings are memory-backed too; concatenation and equality execute in WASM. JavaScript handles input/output, Unicode text operations, and selected built-ins. Other language features continue through the self-hosted compatibility backend.
 
 ## Run locally
 
@@ -35,7 +35,7 @@ The downloaded `.wasm` has `env` imports for the Pseudo2Wasm runtime. It is not 
 
 ## Self-hosted compiler
 
-Run `npm run bootstrap` to build the pseudocode compiler and assembler and verify that both rebuild themselves byte for byte through two WebAssembly stages. Then use `npm run selfhost:compile -- bootstrap/demo.pseudo bootstrap/build/demo.wasm` to compile with the bootstrapped compiler. The IDE's Run, Compile, and Download buttons use the same compiler. See [the bootstrap guide](bootstrap/README.md) for the architecture and precise language limits.
+Run `npm run bootstrap` to build the pseudocode compiler, compatibility assembler, and native lowerer, then verify that the native stages rebuild all three native modules byte for byte. Use `npm run selfhost:compile -- bootstrap/demo.pseudo bootstrap/build/demo.wasm` to compile with the bootstrapped compiler. The IDE's Run, Compile, and Download buttons use the same compiler. See [the bootstrap guide](bootstrap/README.md) for the architecture and precise language limits.
 
 ## Language coverage
 
