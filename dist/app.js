@@ -2,14 +2,15 @@ import { parse } from './src/parser.js';
 import { createRuntime } from './src/runtime.js';
 import { advancedExamples } from './examples.js';
 import { compileSelfHostedInBrowser } from './selfhost.js';
+import { completions, diagnosticRange } from './editor-intelligence.js';
 
 const $ = id => document.getElementById(id);
 const app = document.querySelector('.app');
 const consoleContent = $('console-content');
 const STORAGE = 'pseudo2wasm.project.v2';
 const panes = {
-  primary: { group: $('primary-group'), tabs: $('primary-tabs'), editor: $('primary-editor'), highlight: $('primary-highlight'), gutter: $('primary-gutter') },
-  secondary: { group: $('secondary-group'), tabs: $('secondary-tabs'), editor: $('secondary-editor'), highlight: $('secondary-highlight'), gutter: $('secondary-gutter') },
+  primary: { group: $('primary-group'), tabs: $('primary-tabs'), editor: $('primary-editor'), highlight: $('primary-highlight'), gutter: $('primary-gutter'), completion: $('primary-completion'), search: $('primary-search'), searchInput: $('primary-search-input'), replaceInput: $('primary-replace-input') },
+  secondary: { group: $('secondary-group'), tabs: $('secondary-tabs'), editor: $('secondary-editor'), highlight: $('secondary-highlight'), gutter: $('secondary-gutter'), completion: $('secondary-completion'), search: $('secondary-search'), searchInput: $('secondary-search-input'), replaceInput: $('secondary-replace-input') },
 };
 const examples = [
   { name: 'Hello world', filename: 'hello-world.pseudo', code: `// Your first CAIE pseudocode program\nDECLARE Name : STRING\nOUTPUT "What is your name?"\nINPUT Name\nOUTPUT "Hello, ", Name, "!"\n` },
@@ -54,15 +55,28 @@ const escape = value => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').repla
 const tokenPattern = /\/\/[^\n]*|"(?:""|\\.|[^"])*"|'(?:''|\\.|[^'])*'|\b(?:DECLARE|CONSTANT|TYPE|ENDTYPE|DEFINE|CLASS|ENDCLASS|PUBLIC|PRIVATE|INHERITS|FUNCTION|ENDFUNCTION|PROCEDURE|ENDPROCEDURE|RETURNS|RETURN|BYREF|BYVAL|CALL|NEW|SUPER|OUTPUT|INPUT|OPENFILE|CLOSEFILE|READFILE|WRITEFILE|GETRECORD|PUTRECORD|SEEK|FOR|TO|STEP|NEXT|WHILE|ENDWHILE|REPEAT|UNTIL|IF|THEN|ELSE|ENDIF|CASE|OF|OTHERWISE|ENDCASE|AND|OR|NOT|IN|DIV|MOD|TRUE|FALSE|NULL|INTEGER|REAL|BOOLEAN|CHAR|STRING|DATE|ARRAY|SET|READ|WRITE|APPEND|RANDOM)\b|\b\d+(?:\.\d+)?\b|[←&<>+=*/^-]/gi;
 const flow = new Set(['IF','THEN','ELSE','ENDIF','CASE','OF','OTHERWISE','ENDCASE','FOR','TO','STEP','NEXT','WHILE','ENDWHILE','REPEAT','UNTIL','FUNCTION','ENDFUNCTION','PROCEDURE','ENDPROCEDURE','RETURN','CALL','CLASS','ENDCLASS']);
 const types = new Set(['INTEGER','REAL','BOOLEAN','CHAR','STRING','DATE','ARRAY','SET']);
-function colorize(source) {
+function colorize(source, issues = []) {
+  const ranges = issues.map(issue => diagnosticRange(source, issue)).filter(Boolean);
   let last = 0, html = '';
+  const segment = (value, offset, cls = '') => {
+    const cuts = [0, value.length];
+    for (const [start, end] of ranges) { if (start > offset && start < offset + value.length) cuts.push(start - offset); if (end > offset && end < offset + value.length) cuts.push(end - offset); }
+    cuts.sort((a, b) => a - b);
+    for (let i = 0; i < cuts.length - 1; i++) {
+      const a = cuts[i], b = cuts[i + 1]; if (a === b) continue;
+      const error = ranges.some(([start, end]) => offset + a >= start && offset + a < end);
+      const classes = [cls, error ? 'editor-error-underline' : ''].filter(Boolean).join(' ');
+      html += classes ? `<span class="${classes}">${escape(value.slice(a, b))}</span>` : escape(value.slice(a, b));
+    }
+  };
   for (const match of source.matchAll(tokenPattern)) {
-    html += escape(source.slice(last, match.index));
+    segment(source.slice(last, match.index), last);
     const value = match[0], upper = value.toUpperCase();
     const cls = value.startsWith('//') ? 'tok-comment' : value.startsWith('"') || value.startsWith("'") ? 'tok-string' : /^\d/.test(value) ? 'tok-number' : flow.has(upper) ? 'tok-flow' : types.has(upper) ? 'tok-type' : /^[A-Z_]/i.test(value) ? 'tok-key' : 'tok-op';
-    html += `<span class="${cls}">${escape(value)}</span>`; last = match.index + value.length;
+    segment(value, match.index, cls); last = match.index + value.length;
   }
-  return html + escape(source.slice(last)) + '\n';
+  segment(source.slice(last), last);
+  return html + '\n';
 }
 function save() {
   project.input = $('stdin').value;
@@ -214,6 +228,8 @@ function renderTabs(which) {
     const label = document.createElement('span'); label.className = 'source-tab-name'; label.textContent = name;
     const close = document.createElement('button'); close.className = 'tab-close'; close.type = 'button'; close.setAttribute('aria-label', `Close ${name} in ${which} editor`); close.textContent = '×';
     close.addEventListener('click', event => { event.stopPropagation(); closeTab(which, name); });
+    tab.addEventListener('auxclick', event => { if (event.button === 1) { event.preventDefault(); event.stopPropagation(); closeTab(which, name); } });
+    tab.addEventListener('mousedown', event => { if (event.button === 1) event.preventDefault(); });
     tab.addEventListener('click', () => openSource(name, which));
     tab.addEventListener('keydown', event => { if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) showFileContextMenu(event, name, which); else if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openSource(name, which); } });
     tab.addEventListener('contextmenu', event => showFileContextMenu(event, name, which));
@@ -227,8 +243,8 @@ function renderCode(which) {
   if (!name) { pane.editor.value = ''; pane.highlight.textContent = ''; pane.gutter.textContent = ''; return; }
   const source = project.sourceFiles[name] ?? '';
   if (pane.editor.value !== source) pane.editor.value = source;
-  pane.highlight.innerHTML = colorize(source);
   const errors = problemsByFile[name] || [];
+  pane.highlight.innerHTML = colorize(source, errors);
   pane.gutter.innerHTML = Array.from({ length: source.split('\n').length }, (_, i) => `<div class="${errors.some(p => p.line === i + 1) ? 'error-line' : ''}">${i + 1}</div>`).join('');
   pane.highlight.scrollTop = pane.editor.scrollTop; pane.highlight.scrollLeft = pane.editor.scrollLeft; pane.gutter.scrollTop = pane.editor.scrollTop;
 }
@@ -243,6 +259,7 @@ function updateStatus() {
   $('diagnostic-summary').textContent = waitingInput ? `Waiting for ${waitingInput.label} at line ${waitingInput.line}` : problems.length ? `${problems.length} problem${problems.length === 1 ? '' : 's'} in ${name}` : 'No problems';
 }
 function renderWorkspace() {
+  for (const which of ['primary', 'secondary']) hideCompletions(which);
   applyLayout(); renderExplorer();
   $('secondary-group').hidden = !project.split; $('split-resizer').hidden = !project.split; $('close-split').hidden = !project.split;
   $('primary-group').classList.toggle('primary-split', project.split);
@@ -515,21 +532,135 @@ function installSplitResizer() {
   handle.addEventListener('keydown', event => { if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return; event.preventDefault(); project.layout.splitRatio = Math.max(25, Math.min(75, project.layout.splitRatio + (event.key === 'ArrowRight' ? 5 : -5))); applyLayout(); scheduleSave(); });
 }
 
+function hideCompletions(which) { const pane = panes[which]; pane.completion.hidden = true; pane.completionData = null; }
+function showCompletions(which, explicit = false) {
+  const pane = panes[which], editor = pane.editor;
+  if (editor.selectionStart !== editor.selectionEnd || !project.panes[which].active) { hideCompletions(which); return; }
+  const result = completions(editor.value, editor.selectionStart, Object.keys(project.files));
+  if (!result?.items.length || (!explicit && result.start === result.end && !['.', '"'].includes(editor.value[editor.selectionStart - 1]))) { hideCompletions(which); return; }
+  pane.completionData = { ...result, selected: 0 };
+  renderCompletions(which);
+  const before = editor.value.slice(0, editor.selectionStart), lines = before.split('\n');
+  const style = getComputedStyle(editor), canvas = document.createElement('canvas'), context = canvas.getContext('2d');
+  context.font = style.font;
+  const characterWidth = context.measureText('M').width, lineHeight = parseFloat(style.lineHeight);
+  const left = parseFloat(style.paddingLeft) + lines.at(-1).length * characterWidth - editor.scrollLeft;
+  const top = parseFloat(style.paddingTop) + lines.length * lineHeight - editor.scrollTop;
+  pane.completion.style.left = `${Math.max(4, Math.min(left, pane.completion.parentElement.clientWidth - 310))}px`;
+  pane.completion.style.top = `${Math.max(4, Math.min(top, pane.completion.parentElement.clientHeight - 250))}px`;
+  pane.completion.hidden = false;
+}
+function renderCompletions(which) {
+  const pane = panes[which], data = pane.completionData;
+  pane.completion.replaceChildren();
+  for (const [index, item] of data.items.slice(0, 12).entries()) {
+    const row = document.createElement('button'); row.type = 'button'; row.className = `completion-item${index === data.selected ? ' selected' : ''}`;
+    row.setAttribute('role', 'option'); row.setAttribute('aria-selected', String(index === data.selected));
+    const kind = document.createElement('span'); kind.className = `completion-kind completion-${item.kind}`; kind.textContent = item.kind.slice(0, 1).toUpperCase();
+    const label = document.createElement('span'); label.className = 'completion-label'; label.textContent = item.label;
+    const detail = document.createElement('span'); detail.className = 'completion-detail'; detail.textContent = item.detail;
+    row.append(kind, label, detail);
+    row.addEventListener('mousedown', event => event.preventDefault());
+    row.addEventListener('click', () => acceptCompletion(which, index)); pane.completion.append(row);
+  }
+}
+function acceptCompletion(which, index = panes[which].completionData?.selected) {
+  const pane = panes[which], data = pane.completionData, item = data?.items[index]; if (!item) return;
+  pane.editor.setRangeText(item.insert, data.start, data.end, 'end');
+  if (Number.isInteger(item.caret)) pane.editor.setSelectionRange(data.start + item.caret, data.start + item.caret);
+  hideCompletions(which); pane.suppressCompletion = true; pane.editor.dispatchEvent(new Event('input', { bubbles: true })); pane.editor.focus();
+}
+function editLines(which, action) {
+  const editor = panes[which].editor, source = editor.value;
+  const originalStart = editor.selectionStart, originalEnd = editor.selectionEnd;
+  const first = source.lastIndexOf('\n', editor.selectionStart - 1) + 1;
+  const last = editor.selectionEnd > first && source[editor.selectionEnd - 1] === '\n' ? editor.selectionEnd - 1 : editor.selectionEnd;
+  const end = source.indexOf('\n', last), finish = end < 0 ? source.length : end;
+  const block = source.slice(first, finish), lines = block.split('\n'); let replacement = block;
+  if (action === 'comment') { const uncomment = lines.every(line => /^\s*\/\//.test(line)); replacement = lines.map(line => uncomment ? line.replace(/^(\s*)\/\/ ?/, '$1') : line.replace(/^(\s*)/, '$1// ')).join('\n'); }
+  else if (action === 'indent') replacement = lines.map(line => `  ${line}`).join('\n');
+  else if (action === 'outdent') replacement = lines.map(line => line.replace(/^(?:  |\t)/, '')).join('\n');
+  else if (action === 'delete') { const removeEnd = end < 0 ? finish : finish + 1; editor.setRangeText('', first, removeEnd, 'start'); editor.dispatchEvent(new Event('input', { bubbles: true })); return; }
+  editor.setRangeText(replacement, first, finish, 'select');
+  if (originalStart === originalEnd) { const next = Math.min(first + replacement.length, Math.max(first, originalStart + replacement.length - block.length)); editor.setSelectionRange(next, next); }
+  editor.dispatchEvent(new Event('input', { bubbles: true }));
+}
+function moveLine(which, direction) {
+  const editor = panes[which].editor, source = editor.value, start = source.lastIndexOf('\n', editor.selectionStart - 1) + 1;
+  const endPos = source.indexOf('\n', editor.selectionEnd), end = endPos < 0 ? source.length : endPos;
+  if (direction < 0) {
+    if (start === 0) return;
+    const previous = source.lastIndexOf('\n', start - 2) + 1, chunk = source.slice(previous, start - 1);
+    editor.setRangeText(`${source.slice(start, end)}\n${chunk}`, previous, end, 'select');
+  } else {
+    if (endPos < 0) return;
+    const nextEndPos = source.indexOf('\n', endPos + 1), nextEnd = nextEndPos < 0 ? source.length : nextEndPos;
+    editor.setRangeText(`${source.slice(endPos + 1, nextEnd)}\n${source.slice(start, end)}`, start, nextEnd, 'select');
+  }
+  editor.dispatchEvent(new Event('input', { bubbles: true }));
+}
+function showSearch(which, replace = false) {
+  const pane = panes[which]; pane.search.hidden = false; pane.search.classList.toggle('with-replace', replace);
+  const selection = pane.editor.value.slice(pane.editor.selectionStart, pane.editor.selectionEnd);
+  if (selection && !selection.includes('\n')) pane.searchInput.value = selection;
+  pane.searchInput.focus(); pane.searchInput.select();
+}
+function findNext(which, backwards = false, focus = true) {
+  const pane = panes[which], query = pane.searchInput.value; if (!query) return;
+  const source = pane.editor.value.toLowerCase(), target = query.toLowerCase();
+  let index = backwards ? source.lastIndexOf(target, pane.editor.selectionStart - 1) : source.indexOf(target, pane.editor.selectionEnd);
+  if (index < 0) index = backwards ? source.lastIndexOf(target) : source.indexOf(target);
+  if (index >= 0) { if (focus) pane.editor.focus(); pane.editor.setSelectionRange(index, index + query.length); updateStatus(); }
+}
+function quickOpen() {
+  const overlay = $('quick-open'), input = $('quick-open-input'); overlay.hidden = false; input.value = ''; renderQuickOpen(); input.focus();
+}
+function renderQuickOpen() {
+  const query = $('quick-open-input').value.toLowerCase(), list = $('quick-open-list'); list.replaceChildren();
+  for (const name of project.fileOrder.filter(name => name.toLowerCase().includes(query)).slice(0, 12)) {
+    const button = document.createElement('button'); button.type = 'button'; button.className = 'quick-open-item'; button.textContent = `◇  ${name}`;
+    button.addEventListener('click', () => { $('quick-open').hidden = true; openSource(name); }); list.append(button);
+  }
+}
+
 for (const which of ['primary', 'secondary']) {
   const pane = panes[which], empty = document.createElement('div'); empty.className = 'editor-empty'; empty.textContent = 'Open a pseudocode file from Explorer'; pane.group.append(empty);
   pane.editor.addEventListener('focus', () => setActivePane(which));
-  pane.editor.addEventListener('click', updateStatus); pane.editor.addEventListener('keyup', updateStatus);
-  pane.editor.addEventListener('scroll', () => { pane.highlight.scrollTop = pane.editor.scrollTop; pane.highlight.scrollLeft = pane.editor.scrollLeft; pane.gutter.scrollTop = pane.editor.scrollTop; });
+  pane.editor.addEventListener('click', () => { hideCompletions(which); updateStatus(); }); pane.editor.addEventListener('keyup', updateStatus);
+  pane.editor.addEventListener('blur', event => { if (!pane.completion.contains(event.relatedTarget)) hideCompletions(which); });
+  pane.editor.addEventListener('scroll', () => { pane.highlight.scrollTop = pane.editor.scrollTop; pane.highlight.scrollLeft = pane.editor.scrollLeft; pane.gutter.scrollTop = pane.editor.scrollTop; hideCompletions(which); });
   pane.editor.addEventListener('input', () => {
     const name = project.panes[which].active; if (!name) return;
     if (waitingInput?.session.filename === name) { runToken++; waitingInput = null; log('Run cancelled after source edit.', 'meta'); }
     project.sourceFiles[name] = pane.editor.value; if (builtFile === name) { lastCompiled = null; builtSource = null; }
     renderCode(which); renderCode(which === 'primary' ? 'secondary' : 'primary'); updateStatus(); scheduleSave();
     clearTimeout(diagnoseTimer); diagnoseTimer = setTimeout(() => diagnose(name), 250);
+    if (pane.suppressCompletion) pane.suppressCompletion = false; else showCompletions(which);
   });
   pane.editor.addEventListener('keydown', event => {
-    if (event.key === 'Tab' && !event.ctrlKey) { event.preventDefault(); const a = pane.editor.selectionStart, b = pane.editor.selectionEnd; pane.editor.setRangeText('  ', a, b, 'end'); pane.editor.dispatchEvent(new Event('input')); }
+    const data = pane.completionData;
+    if (data && ['ArrowDown', 'ArrowUp'].includes(event.key)) { event.preventDefault(); data.selected = (data.selected + (event.key === 'ArrowDown' ? 1 : -1) + Math.min(12, data.items.length)) % Math.min(12, data.items.length); renderCompletions(which); return; }
+    if (data && ['Tab', 'Enter'].includes(event.key)) { event.preventDefault(); acceptCompletion(which); return; }
+    if (event.key === 'Escape' && data) { event.preventDefault(); hideCompletions(which); return; }
+    if ((event.ctrlKey || event.metaKey) && event.code === 'Space') { event.preventDefault(); showCompletions(which, true); return; }
+    if ((event.ctrlKey || event.metaKey) && event.key === '/') { event.preventDefault(); hideCompletions(which); editLines(which, 'comment'); return; }
+    if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'k') { event.preventDefault(); hideCompletions(which); editLines(which, 'delete'); return; }
+    if (event.altKey && ['ArrowUp', 'ArrowDown'].includes(event.key)) { event.preventDefault(); hideCompletions(which); moveLine(which, event.key === 'ArrowUp' ? -1 : 1); return; }
+    if (event.key === 'Tab' && !event.ctrlKey && !event.metaKey) { event.preventDefault(); hideCompletions(which); if (event.shiftKey) editLines(which, 'outdent'); else if (pane.editor.value.slice(pane.editor.selectionStart, pane.editor.selectionEnd).includes('\n')) editLines(which, 'indent'); else { pane.editor.setRangeText('  ', pane.editor.selectionStart, pane.editor.selectionEnd, 'end'); pane.editor.dispatchEvent(new Event('input')); } return; }
     if (event.key === 'Enter') { const before = pane.editor.value.slice(0, pane.editor.selectionStart), indent = before.slice(before.lastIndexOf('\n') + 1).match(/^\s*/)[0]; if (indent) { event.preventDefault(); pane.editor.setRangeText('\n' + indent, pane.editor.selectionStart, pane.editor.selectionEnd, 'end'); pane.editor.dispatchEvent(new Event('input')); } }
+  });
+  pane.searchInput.addEventListener('input', () => findNext(which, false, false));
+  pane.searchInput.addEventListener('keydown', event => { if (event.key === 'Escape') { pane.search.hidden = true; pane.editor.focus(); } else if (event.key === 'Enter') { event.preventDefault(); findNext(which, event.shiftKey); } });
+  pane.replaceInput.addEventListener('keydown', event => { if (event.key === 'Escape') { pane.search.hidden = true; pane.editor.focus(); } else if (event.key === 'Enter') { event.preventDefault(); pane.search.querySelector('[data-search-action="replace"]').click(); } });
+  pane.search.addEventListener('click', event => {
+    const action = event.target.closest('[data-search-action]')?.dataset.searchAction; if (!action) return;
+    if (action === 'close') { pane.search.hidden = true; pane.editor.focus(); }
+    else if (action === 'next' || action === 'previous') findNext(which, action === 'previous');
+    else {
+      const query = pane.searchInput.value; if (!query) return;
+      if (action === 'all') { pane.editor.value = pane.editor.value.replaceAll(new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), pane.replaceInput.value); pane.editor.dispatchEvent(new Event('input')); }
+      else { const selection = pane.editor.value.slice(pane.editor.selectionStart, pane.editor.selectionEnd); if (selection.toLowerCase() !== query.toLowerCase()) findNext(which); else { pane.editor.setRangeText(pane.replaceInput.value, pane.editor.selectionStart, pane.editor.selectionEnd, 'end'); pane.editor.dispatchEvent(new Event('input')); findNext(which); } }
+    }
   });
 }
 $('example-count').textContent = String(examples.length).padStart(2, '0');
@@ -565,14 +696,31 @@ $('run-button').addEventListener('click', runProgram); $('compile-button').addEv
 $('clear-output').addEventListener('click', () => { consoleLines = []; $('output-count').textContent = '0'; renderConsole(); });
 document.querySelectorAll('[data-console-tab]').forEach(button => button.addEventListener('click', () => switchConsole(button.dataset.consoleTab)));
 document.querySelectorAll('[data-tool]').forEach(button => button.addEventListener('click', () => switchTool(button.dataset.tool)));
+$('quick-open-input').addEventListener('input', renderQuickOpen);
+$('quick-open-input').addEventListener('keydown', event => {
+  if (event.key === 'Escape') { $('quick-open').hidden = true; panes[project.activePane].editor.focus(); }
+  else if (event.key === 'Enter') { event.preventDefault(); $('quick-open-list').querySelector('button')?.click(); }
+  else if (event.key === 'ArrowDown') { event.preventDefault(); $('quick-open-list').querySelector('button')?.focus(); }
+});
+$('quick-open-list').addEventListener('keydown', event => {
+  const items = [...$('quick-open-list').querySelectorAll('button')], index = items.indexOf(document.activeElement);
+  if (event.key === 'Escape') { $('quick-open').hidden = true; panes[project.activePane].editor.focus(); }
+  else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); items[(index + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus(); }
+});
+$('quick-open').addEventListener('mousedown', event => { if (event.target === $('quick-open')) $('quick-open').hidden = true; });
 document.addEventListener('keydown', async event => {
+  if (event.key === 'Escape' && !$('quick-open').hidden) { $('quick-open').hidden = true; return; }
   if (!(event.ctrlKey || event.metaKey)) return;
   if (event.key === 'Enter') { event.preventDefault(); runProgram(); }
   else if (event.shiftKey && event.key.toLowerCase() === 'b') { event.preventDefault(); const result = await build(); switchConsole(result ? 'build' : 'diagnostics'); }
   else if (event.key.toLowerCase() === 's') { event.preventDefault(); save(); }
+  else if (event.key.toLowerCase() === 'p') { event.preventDefault(); quickOpen(); }
+  else if (event.key.toLowerCase() === 'f') { event.preventDefault(); showSearch(project.activePane); }
+  else if (event.key.toLowerCase() === 'h') { event.preventDefault(); showSearch(project.activePane, true); }
+  else if (event.key.toLowerCase() === 'g') { event.preventDefault(); showWorkspaceDialog({ title: 'Go to line', label: 'Line number', value: '1', submitLabel: 'Go', validate: value => !/^\d+$/.test(value) || Number(value) < 1 || Number(value) > panes[project.activePane].editor.value.split('\n').length ? 'Enter a line number in the current file.' : null, onSubmit: value => { const editor = panes[project.activePane].editor; const position = editor.value.split('\n').slice(0, Number(value) - 1).reduce((sum, line) => sum + line.length + 1, 0); editor.focus(); editor.setSelectionRange(position, position); updateStatus(); } }); }
   else if (event.key === '\\') { event.preventDefault(); splitEditor(); }
   else if (event.key.toLowerCase() === 'w') { event.preventDefault(); if (activeName()) closeTab(project.activePane, activeName()); }
-  else if (event.key === 'Tab') { event.preventDefault(); const state = project.panes[project.activePane]; if (state.tabs.length) { const index = state.tabs.indexOf(state.active); openSource(state.tabs[(index + 1) % state.tabs.length]); } }
+  else if (event.key === 'Tab') { event.preventDefault(); const state = project.panes[project.activePane]; if (state.tabs.length) { const index = state.tabs.indexOf(state.active), offset = event.shiftKey ? -1 : 1; openSource(state.tabs[(index + offset + state.tabs.length) % state.tabs.length]); } }
 });
 installResizer('left-resizer', 'x', 'explorerWidth', () => 150, () => Math.min(450, innerWidth - 380));
 installResizer('right-resizer', 'x', 'toolsWidth', () => 220, () => Math.min(500, innerWidth - 380));
