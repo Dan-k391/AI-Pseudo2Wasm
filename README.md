@@ -1,6 +1,6 @@
 # Pseudo2Wasm
 
-A dependency-free compiler and browser IDE for Cambridge International AS & A Level Computer Science (9618) pseudocode. The browser compiles source with a self-hosted WebAssembly compiler and assembler written in pseudocode. A JavaScript runtime supplies input/output, typed values, strings, and virtual files through host imports.
+A dependency-free compiler and browser IDE for Cambridge International AS & A Level Computer Science (9618) pseudocode. The browser compiles source with a self-hosted WebAssembly compiler and assembler written in pseudocode. Generated modules embed UTF-8 literals and store dynamic strings in exported WebAssembly memory. A JavaScript runtime supplies input/output, type checks, composite values, and virtual files through host imports.
 
 ## Run locally
 

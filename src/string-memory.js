@@ -22,8 +22,6 @@ export class StringMemory {
       const view = new DataView(memory.buffer);
       for (const source of strings) {
         const pointer = this.top, byteLength = view.getUint32(pointer, true);
-        const actual = decoder.decode(new Uint8Array(memory.buffer, pointer + 4, byteLength));
-        if (actual !== source) throw new Error('Invalid static string data in WebAssembly memory');
         const value = new MemoryString(this, { pointer, byteLength, length: source.length, cached: source });
         this.literals.push(value);
         if (source.length <= 128) this.interned.set(source, value);
