@@ -1,6 +1,6 @@
 # Pseudo2Wasm
 
-A dependency-free compiler and browser IDE for Cambridge International AS & A Level Computer Science (9618) pseudocode. The browser compiles source with a self-hosted WebAssembly compiler and assembler written in pseudocode. Eligible programs then receive a native WASM lowering pass: scalar variables, numeric arrays and records, arithmetic, control flow, routine frames, and `BYREF` addresses run in WASM memory. Strings are memory-backed too; concatenation and equality execute in WASM. JavaScript handles input/output and selected built-ins. Unsupported features continue through the compatibility runtime.
+A dependency-free compiler and browser IDE for Cambridge International AS & A Level Computer Science (9618) pseudocode. The browser compiles source with three self-hosted WebAssembly compiler stages written in pseudocode. Eligible programs use native WASM lowering: scalar variables, arrays, records, arithmetic, control flow, routine frames, and `BYREF` addresses run in WASM memory. Strings are memory-backed too; concatenation and equality execute in WASM. JavaScript handles input/output and selected built-ins. Other language features continue through the self-hosted compatibility backend.
 
 ## Run locally
 
@@ -19,14 +19,16 @@ In an editor, `Ctrl+click` or `F12` jumps to a symbol's declaration, `Shift+F12`
 
 The Explorer includes runnable examples for memoized Fibonacci, the N queens backtracking problem (set `N` to change the board size), and an ASCII Minesweeper game. Minesweeper asks for an action (`R`, `F`, or `Q`), then a row and column for reveal or flag moves; enter each value in the terminal.
 
-## Use the compiler from JavaScript
+## Use the self-hosted compiler from JavaScript
 
 ```js
-import { compile, run } from './src/index.js';
+import { compileSelfHosted, loadSelfHostedCompiler } from './bootstrap/compile.js';
+import { createRuntime } from './src/index.js';
 
 const source = 'DECLARE X : INTEGER\nX ← 6 * 7\nOUTPUT X';
-const { binary } = compile(source);   // a valid WebAssembly module
-const result = await run(source);      // { output: ['42'], files, records, steps, binary }
+const compiler = await loadSelfHostedCompiler();
+const compiled = await compileSelfHosted(source, compiler);
+const result = await createRuntime(compiled).run(); // output: ['42']
 ```
 
 The downloaded `.wasm` has `env` imports for the Pseudo2Wasm runtime. It is not a WASI module; use `createRuntime(compiled, options)` for execution.

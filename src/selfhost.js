@@ -1,6 +1,5 @@
 import { createRuntime } from './runtime.js';
 import { PseudoError } from './parser.js';
-import { tryNativeLower } from './native-wasm.js';
 
 const fromLatin1 = value => Uint8Array.from(value, char => char.charCodeAt(0));
 
@@ -32,13 +31,16 @@ function decodeType(spec, strictBounds = false) {
 
 // The CAIE program emits its own string table and complete WASM binary.
 // JavaScript only transports the input and output through the existing ABI.
-export async function assembleSelfHosted(ir, assembler) {
+function decodeSelfHostedMetadata(ir) {
   const types = {};
   const classes = {};
   const routines = [];
   const instructions = [];
   for (const line of ir) {
-    if (line.startsWith('M:TYPE:')) {
+    if (line.startsWith('M:CONST:')) {
+      // The native lowerer consumes constant metadata; the compatibility
+      // assembler already receives its executable declaration IR below.
+    } else if (line.startsWith('M:TYPE:')) {
       const separator = line.indexOf(':', 7);
       if (separator < 0) throw new Error(`Invalid type metadata: ${line}`);
       const name = line.slice(7, separator);
@@ -83,6 +85,11 @@ export async function assembleSelfHosted(ir, assembler) {
       });
     } else instructions.push(line);
   }
+  return { types, classes, routines, instructions };
+}
+
+export async function assembleSelfHosted(ir, assembler, metadata = decodeSelfHostedMetadata(ir)) {
+  const { types, classes, routines, instructions } = metadata;
   const result = await createRuntime(assembler, {
     inputLines: [instructions.join('\n')],
     maxSteps: 20000000,
@@ -112,12 +119,36 @@ export async function assembleSelfHosted(ir, assembler) {
   return { binary, strings, literalStrings, types, classes, routines };
 }
 
-export async function compileSelfHostedSource(source, core, assembler) {
+export async function lowerSelfHostedNative(ir, lowerer) {
+  const result = await createRuntime(lowerer, {
+    inputLines: [ir.join('\n')],
+    maxSteps: 20000000,
+  }).run();
+  if (result.status !== 'completed') throw new Error(`Native lowerer stopped with status ${result.status}`);
+  if (result.output.length === 1 && result.output[0].startsWith('N:UNSUPPORTED')) return null;
+  const binaryLine = result.output.find(line => line.startsWith('B:'));
+  if (!binaryLine || result.output.some(line => !['B:', 'L:', 'G:', 'F:', 'D:'].some(prefix => line.startsWith(prefix))))
+    throw new Error('Native lowerer emitted unexpected output');
+  const binary = fromLatin1(binaryLine.slice(2));
+  if (!WebAssembly.validate(binary)) throw new Error('Self-hosted native lowerer emitted invalid WebAssembly');
+  return {
+    binary, native: true, nativeBackend: 'selfhosted', nativeLabels: result.output.filter(line => line.startsWith('L:')).map(line => line.slice(2)),
+    nativeGlobalBase: Number(result.output.find(line => line.startsWith('G:'))?.slice(2) || 8),
+    nativeFrameBase: Number(result.output.find(line => line.startsWith('F:'))?.slice(2) || 0),
+    nativeDataEnd: Number(result.output.find(line => line.startsWith('D:'))?.slice(2) || 8),
+  };
+}
+
+export async function compileSelfHostedSource(source, core, assembler, nativeLowerer = null) {
   const result = await createRuntime(core, {
     inputLines: [source.replace(/\r\n/g, '\n')],
     maxSteps: 20000000,
   }).run();
   if (result.status !== 'completed') throw new Error(`Compiler stopped with status ${result.status}`);
-  const compatible = await assembleSelfHosted(result.output, assembler);
-  return tryNativeLower(source, compatible) || compatible;
+  const metadata = decodeSelfHostedMetadata(result.output);
+  if (nativeLowerer) {
+    const native = await lowerSelfHostedNative(result.output, nativeLowerer);
+    if (native) return { types: metadata.types, classes: metadata.classes, routines: metadata.routines, strings: [], literalStrings: [], ...native };
+  }
+  return assembleSelfHosted(result.output, assembler, metadata);
 }

@@ -695,6 +695,7 @@ WHILE POSITION <= LENGTH(SOURCE)
       START_POSITION ← OP_POSITION + 2
       LINE_LENGTH ← LENGTH(LINE)
       EXPR ← MID(LINE, START_POSITION, LINE_LENGTH)
+      OUTPUT "M:CONST:" & NAME & ":" & EXPR
       OUTPUT "I:" & NAME
       OUTPUT "I:$CONSTANT"
       MODE ← "CONSTANT"
@@ -1475,7 +1476,13 @@ WHILE POSITION <= LENGTH(SOURCE)
                 IF CHARACTER = "(" THEN
                   DEPTH ← DEPTH + 1
                 ENDIF
+                IF CHARACTER = "[" THEN
+                  DEPTH ← DEPTH + 1
+                ENDIF
                 IF CHARACTER = ")" THEN
+                  DEPTH ← DEPTH - 1
+                ENDIF
+                IF CHARACTER = "]" THEN
                   DEPTH ← DEPTH - 1
                 ENDIF
                 IF DEPTH = 0 THEN

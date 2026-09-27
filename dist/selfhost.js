@@ -16,14 +16,16 @@ async function assets() {
   assetsPromise ??= Promise.all([
     binary('./bootstrap/core.wasm'), metadata('./bootstrap/core.json'),
     binary('./bootstrap/assembler.wasm'), metadata('./bootstrap/assembler.json'),
-  ]).then(([coreBinary, coreMetadata, assemblerBinary, assemblerMetadata]) => ({
+    binary('./bootstrap/native.wasm'), metadata('./bootstrap/native.json'),
+  ]).then(([coreBinary, coreMetadata, assemblerBinary, assemblerMetadata, nativeBinary, nativeMetadata]) => ({
     core: { binary: coreBinary, ...coreMetadata },
     assembler: { binary: assemblerBinary, ...assemblerMetadata },
+    native: { binary: nativeBinary, ...nativeMetadata },
   }));
   return assetsPromise;
 }
 
 export async function compileSelfHostedInBrowser(source) {
-  const { core, assembler } = await assets();
-  return compileSelfHostedSource(source, core, assembler);
+  const { core, assembler, native } = await assets();
+  return compileSelfHostedSource(source, core, assembler, native);
 }

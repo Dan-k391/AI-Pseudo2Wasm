@@ -579,7 +579,7 @@ function renderConsole() {
     }
   } else {
     const info = document.createElement('div'); info.className = 'build-log';
-    if (buildInfo) info.innerHTML = `<strong>${escape(buildInfo.name)} · build succeeded</strong><br>Execution: ${buildInfo.native ? 'Native WASM' : 'Compatibility runtime'}<br>WebAssembly module: ${buildInfo.size.toLocaleString()} bytes<br>Routines: ${buildInfo.routines}<br>Imports: ${buildInfo.imports}<br>Compiled in ${buildInfo.ms.toFixed(1)} ms`;
+    if (buildInfo) info.innerHTML = `<strong>${escape(buildInfo.name)} · build succeeded</strong><br>Execution: ${buildInfo.native ? 'Self-hosted native WASM' : 'Self-hosted compatibility WASM'}<br>WebAssembly module: ${buildInfo.size.toLocaleString()} bytes<br>Routines: ${buildInfo.routines}<br>Imports: ${buildInfo.imports}<br>Compiled in ${buildInfo.ms.toFixed(1)} ms`;
     else info.textContent = 'Compile the active source file to inspect its WebAssembly module.';
     consoleContent.append(info);
     if (buildInfo) { const button = document.createElement('button'); button.className = 'tiny-button'; button.style.marginTop = '14px'; button.textContent = 'Download project .json'; button.addEventListener('click', downloadProject); consoleContent.append(button); }

@@ -6,21 +6,24 @@ import { compileSelfHostedSource } from '../src/selfhost.js';
 const here = dirname(fileURLToPath(import.meta.url));
 
 export async function loadSelfHostedCompiler() {
-  const [binary, metadata, assemblerBinary, assemblerMetadata] = await Promise.all([
+  const [binary, metadata, assemblerBinary, assemblerMetadata, nativeBinary, nativeMetadata] = await Promise.all([
     readFile(join(here, 'build', 'core.wasm')),
     readFile(join(here, 'build', 'core.json'), 'utf8'),
     readFile(join(here, 'build', 'assembler.wasm')),
     readFile(join(here, 'build', 'assembler.json'), 'utf8'),
+    readFile(join(here, 'build', 'native.wasm')),
+    readFile(join(here, 'build', 'native.json'), 'utf8'),
   ]);
   return {
     binary: new Uint8Array(binary), ...JSON.parse(metadata),
     assembler: { binary: new Uint8Array(assemblerBinary), ...JSON.parse(assemblerMetadata) },
+    nativeLowerer: { binary: new Uint8Array(nativeBinary), ...JSON.parse(nativeMetadata) },
   };
 }
 
 export async function compileSelfHosted(source, compiler) {
   if (!compiler.assembler) throw new Error('Self-hosted assembler is missing');
-  return compileSelfHostedSource(source, compiler, compiler.assembler);
+  return compileSelfHostedSource(source, compiler, compiler.assembler, compiler.nativeLowerer);
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url).toLowerCase() === resolve(process.argv[1]).toLowerCase()) {

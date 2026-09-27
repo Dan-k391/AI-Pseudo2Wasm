@@ -1,6 +1,6 @@
 import { performance } from 'node:perf_hooks';
 import { compile, createRuntime } from '../src/index.js';
-import { tryNativeLower } from '../src/native-wasm.js';
+import { compileSelfHosted, loadSelfHostedCompiler } from '../bootstrap/compile.js';
 
 const source = `DECLARE Total : INTEGER
 DECLARE I : INTEGER
@@ -9,8 +9,8 @@ FOR I ← 1 TO 100000
 NEXT I
 OUTPUT Total
 `;
-const compatible = compile(source), native = tryNativeLower(source, compatible);
-if (!native) throw new Error('Expected native lowering');
+const compatible = compile(source), native = await compileSelfHosted(source, await loadSelfHostedCompiler());
+if (native.nativeBackend !== 'selfhosted') throw new Error('Expected self-hosted native lowering');
 const timed = async module => {
   const start = performance.now();
   const result = await createRuntime(module, { maxSteps: 500000 }).run();

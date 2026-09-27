@@ -8,6 +8,7 @@ import { assembleSelfHosted } from './assemble-self.js';
 const here = dirname(fileURLToPath(import.meta.url));
 export const coreSource = (await readFile(join(here, 'core.pseudo'), 'utf8')).replace(/\r\n/g, '\n');
 export const assemblerSource = (await readFile(join(here, 'assembler.pseudo'), 'utf8')).replace(/\r\n/g, '\n');
+export const nativeSource = (await readFile(join(here, 'native.pseudo'), 'utf8')).replace(/\r\n/g, '\n');
 
 function abiPrefix(binary) {
   let offset = 8;
@@ -32,15 +33,19 @@ export async function bootstrap() {
   const seedAssembler = compile(assemblerSource);
   const firstCore = await compileWith(seedCore, seedAssembler, coreSource);
   const firstAssembler = await compileWith(seedCore, seedAssembler, assemblerSource);
+  const seedNative = await compileWith(seedCore, seedAssembler, nativeSource);
   const expectedPrefix = abiPrefix(compile('').binary);
   assert.deepEqual(firstCore.binary.slice(0, expectedPrefix.length), expectedPrefix, 'embedded assembler ABI must match the runtime ABI');
   const secondCore = await compileWith(firstCore, firstAssembler, coreSource);
   const secondAssembler = await compileWith(firstCore, firstAssembler, assemblerSource);
+  const native = await compileWith(firstCore, firstAssembler, nativeSource);
   assert.deepEqual(firstCore.binary, secondCore.binary, 'compiler must reproduce its own WebAssembly');
   assert.deepEqual(firstCore.strings, secondCore.strings, 'compiler must reproduce its own string table');
   assert.deepEqual(firstAssembler.binary, secondAssembler.binary, 'assembler must reproduce its own WebAssembly');
   assert.deepEqual(firstAssembler.strings, secondAssembler.strings, 'assembler must reproduce its own string table');
-  return { ...firstCore, assembler: firstAssembler };
+  assert.deepEqual(seedNative.binary, native.binary, 'native lowerer must compile identically through the self-hosted compiler');
+  assert.deepEqual(seedNative.strings, native.strings, 'native lowerer string table must match');
+  return { ...firstCore, assembler: firstAssembler, nativeLowerer: native };
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url).toLowerCase() === process.argv[1].toLowerCase()) {
@@ -52,5 +57,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url).toLowerCase() === process.
   await writeFile(join(outputDir, 'core.json'), metadata(compiled));
   await writeFile(join(outputDir, 'assembler.wasm'), compiled.assembler.binary);
   await writeFile(join(outputDir, 'assembler.json'), metadata(compiled.assembler));
+  await writeFile(join(outputDir, 'native.wasm'), compiled.nativeLowerer.binary);
+  await writeFile(join(outputDir, 'native.json'), metadata(compiled.nativeLowerer));
   console.log(`Self-hosted compiler and assembler reproduced themselves (${compiled.binary.length} + ${compiled.assembler.binary.length} bytes).`);
 }

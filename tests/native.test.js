@@ -1,13 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { compile, createRuntime } from '../src/index.js';
-import { tryNativeLower } from '../src/native-wasm.js';
 import { compileSelfHosted, loadSelfHostedCompiler } from '../bootstrap/compile.js';
 import { advancedExamples } from '../web/examples.js';
 
+const compiler = await loadSelfHostedCompiler();
+
 async function runNative(source, options) {
-  const built = tryNativeLower(source, compile(source));
+  const built = await compileSelfHosted(source, compiler);
   assert.ok(built?.native, 'program should use native lowering');
+  assert.equal(built.nativeBackend, 'selfhosted');
   assert.ok(WebAssembly.validate(built.binary));
   return { built, result: await createRuntime(built, options).run() };
 }
@@ -72,14 +74,16 @@ test('strings live in WASM memory and concatenate inside WASM', async () => {
   assert.ok(Buffer.from(new Uint8Array(result.memory.buffer, 0, result.stringBytes)).includes(Buffer.from('Ada Lovelace')));
 });
 
-test('unsupported classes retain the compatibility module', () => {
+test('unsupported classes retain the compatibility module', async () => {
   const source = 'CLASS Thing\nENDCLASS\nDECLARE X : Thing\n';
-  assert.equal(tryNativeLower(source, compile(source)), null);
+  assert.equal((await compileSelfHosted(source, compiler)).native, undefined);
 });
 
-test('large repeated string appends use the rope-backed compatibility runtime', () => {
+test('large repeated string appends use the rope-backed compatibility runtime', async () => {
   const source = 'DECLARE Text : STRING\nDECLARE I : INTEGER\nFOR I ← 1 TO 70000\n  Text ← Text & "x"\nNEXT I\nOUTPUT LENGTH(Text)\n';
-  assert.equal(tryNativeLower(source, compile(source)), null);
+  const built = await compileSelfHosted(source, compiler);
+  assert.equal(built.native, undefined);
+  assert.deepEqual((await createRuntime(built, { maxSteps: 500000 }).run()).output, ['70000']);
 });
 
 test('BYREF array elements and record fields update the same WASM cells', async () => {
@@ -101,12 +105,31 @@ OUTPUT Items[2], " ", Cell.Value
   assert.deepEqual(result.output, ['7 11']);
 });
 
+test('dynamic BYREF indexes pass the element address through native frames', async () => {
+  const source = `TYPE TCell
+  DECLARE Value : INTEGER
+ENDTYPE
+PROCEDURE AddOne(BYREF N : INTEGER)
+  N ← N + 1
+ENDPROCEDURE
+DECLARE Cells : ARRAY[1:3] OF TCell
+DECLARE Index : INTEGER
+Index ← 2
+Cells[Index].Value ← 8
+CALL AddOne(Cells[Index].Value)
+OUTPUT Cells[Index].Value
+`;
+  const { built, result } = await runNative(source);
+  assert.deepEqual(result.output, ['9']);
+  assert.ok(built.nativeFrameBase > built.nativeGlobalBase);
+});
+
 test('native bounds checks and input still report source locations', async () => {
   const source = 'DECLARE Values : ARRAY[1:2] OF INTEGER\nValues[3] ← 1\n';
-  const built = tryNativeLower(source, compile(source));
+  const built = await compileSelfHosted(source, compiler);
   await assert.rejects(createRuntime(built).run(), error => error.line === 2 && /bounds/.test(error.message));
   const inputSource = 'DECLARE N : INTEGER\nOUTPUT "N?"\nINPUT N\nOUTPUT N + 1\n';
-  const inputBuilt = tryNativeLower(inputSource, compile(inputSource));
+  const inputBuilt = await compileSelfHosted(inputSource, compiler);
   const waiting = await createRuntime(inputBuilt, { interactive: true }).run();
   assert.equal(waiting.status, 'waiting');
   assert.equal(waiting.label, 'N');
@@ -115,17 +138,17 @@ test('native bounds checks and input still report source locations', async () =>
 });
 
 test('the packaged self-hosted compiler selects native WASM for the complex examples', async () => {
-  const compiler = await loadSelfHostedCompiler();
   for (const example of advancedExamples) {
     const built = await compileSelfHosted(example.code, compiler);
     assert.equal(built.native, true, `${example.name} should use native lowering`);
+    assert.equal(built.nativeBackend, 'selfhosted');
     assert.equal(WebAssembly.Module.imports(new WebAssembly.Module(built.binary)).some(item => ['get', 'set', 'index', 'field', 'binary'].includes(item.name)), false);
   }
 });
 
 test('native and compatibility paths agree on all complex example output', async () => {
   for (const example of advancedExamples) {
-    const compatible = compile(example.code), native = tryNativeLower(example.code, compatible);
+    const compatible = compile(example.code), native = await compileSelfHosted(example.code, compiler);
     const options = { maxSteps: 500000, seed: 12345, inputLines: example.name === 'ASCII Minesweeper' ? ['F', '1', '1', 'Q'] : [] };
     const baseline = await createRuntime(compatible, options).run();
     const lowered = await createRuntime(native, options).run();
@@ -164,7 +187,6 @@ CASE OF Total
   OTHERWISE : OUTPUT "Total: ", Total
 ENDCASE
 `;
-  const compiler = await loadSelfHostedCompiler();
   const built = await compileSelfHosted(source, compiler);
   assert.deepEqual((await createRuntime(built).run()).output, ['The even numbers sum to 30']);
 });
