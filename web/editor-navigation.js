@@ -111,7 +111,16 @@ export function indexSource(source) {
     const token = findToken(tokens, offset), definition = resolve(token);
     if (!definition) return null;
     const references = tokens.filter(item => item.kind === 'id' && item.value === definition.name && resolve(item) === definition && item.start !== definition.token.start);
-    return { name: definition.name, definition: definition.token, kind: definition.kind, references };
+    return { name: definition.name, token, definition: definition.token, kind: definition.kind, references };
   };
   return { at, definitions };
+}
+
+export function renameSymbol(source, result, newName) {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(newName)) throw new Error('Enter a valid identifier.');
+  if (keywords.has(newName.toUpperCase())) throw new Error('A language keyword cannot be used as a name.');
+  const locations = [result.definition, ...result.references].sort((a, b) => b.start - a.start);
+  let renamed = source;
+  for (const token of locations) renamed = renamed.slice(0, token.start) + newName + renamed.slice(token.end);
+  return renamed;
 }
