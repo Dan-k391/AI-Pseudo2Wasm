@@ -1,6 +1,7 @@
 import { PseudoError } from './parser.js';
+import { IMPORTS, BINARY } from './abi.js';
 
-const I32 = 0x7f, F64 = 0x7c, REF = 0x6f;
+const REF = 0x6f;
 const enc = new TextEncoder();
 const u = n => { const out = []; do { let b = n & 127; n >>>= 7; if (n) b |= 128; out.push(b); } while (n); return out; };
 const s = n => { const out = []; let more = true; while (more) { let b = n & 127; n >>= 7; const sign = !!(b & 64); more = !((n === 0 && !sign) || (n === -1 && sign)); if (more) b |= 128; out.push(b); } return out; };
@@ -9,21 +10,6 @@ const utf = str => bytes([...enc.encode(str)]);
 const section = (id, body) => [id, ...bytes(body)];
 const f64 = n => { const buffer = new ArrayBuffer(8); new DataView(buffer).setFloat64(0, n, true); return [...new Uint8Array(buffer)]; };
 
-const IMPORTS = [
-  ['tick', [I32], []], ['num', [F64], [REF]], ['str', [I32], [REF]], ['bool', [I32], [REF]],
-  ['get', [I32], [REF]], ['set', [I32, REF], []], ['declare', [I32, I32, REF], []],
-  ['binary', [I32, REF, REF], [REF]], ['unary', [I32, REF], [REF]], ['truth', [REF], [I32]],
-  ['args', [], [REF]], ['push', [REF, REF], [REF]], ['builtin', [I32, REF], [REF]],
-  ['output', [REF], []], ['input', [REF], []], ['index', [REF, REF], [REF]],
-  ['setIndex', [REF, REF, REF], []], ['field', [REF, I32], [REF]], ['setField', [REF, I32, REF], []],
-  ['enter', [I32, REF], []], ['leave', [REF], [REF]], ['create', [I32, REF], [REF]],
-  ['fileOp', [I32, REF], [REF]], ['forContinue', [REF, REF, REF], [I32]],
-  ['caseMatches', [REF, REF, REF, I32], [I32]], ['refName', [I32], [REF]],
-  ['refIndex', [REF, REF], [REF]], ['refField', [REF, I32], [REF]],
-  ['deref', [REF], [REF]], ['setDeref', [REF, REF], []],
-  ['newObject', [I32, REF], [REF]], ['callMethod', [REF, I32, REF], [REF]],
-];
-const BINARY = ['OR', 'AND', '=', '<>', '<', '<=', '>', '>=', 'IN', '&', '+', '-', '*', '/', 'DIV', 'MOD'];
 const UNARY = ['NOT', '-', '+', '^'];
 const FILES = ['OPENFILE', 'CLOSEFILE', 'READFILE', 'WRITEFILE', 'SEEK', 'GETRECORD', 'PUTRECORD'];
 
@@ -60,6 +46,10 @@ export function compileAst(ast) {
       this.call('args');
       args.forEach((arg, i) => { if (byref[i]) this.ref(arg); else this.expr(arg); this.call('push'); });
     }
+    methodArgs(args) {
+      this.call('args');
+      args.forEach(arg => { if (['name', 'field', 'index'].includes(arg.kind)) this.ref(arg); else this.expr(arg); this.call('push'); });
+    }
     ref(n) {
       if (n.kind === 'name') { this.i(intern(n.name)); this.call('refName'); }
       else if (n.kind === 'field') { this.expr(n.target); this.i(intern(n.name)); this.call('refField'); }
@@ -88,13 +78,13 @@ export function compileAst(ast) {
         case 'index': this.expr(n.target); this.arglist(n.indices); this.call('index'); break;
         case 'field': this.expr(n.target); this.i(intern(n.name)); this.call('field'); break;
         case 'deref': this.expr(n.target); this.call('deref'); break;
-        case 'new': this.i(intern(n.name)); this.arglist(n.args); this.call('newObject'); break;
+        case 'new': this.i(intern(n.name)); this.methodArgs(n.args); this.call('newObject'); break;
         case 'call': {
           if (n.target.kind === 'name' && functions.has(n.target.name)) {
             const fn = functions.get(n.target.name); this.arglist(n.args, fn.params.map(p => p.byref));
             this.emit(0x10, ...u(routineIndex.get(n.target.name)));
           } else if (n.target.kind === 'field') {
-            this.expr(n.target.target); this.i(intern(n.target.name)); this.arglist(n.args); this.call('callMethod');
+            this.expr(n.target.target); this.i(intern(n.target.name)); this.methodArgs(n.args); this.call('callMethod');
           } else if (n.target.kind === 'name') {
             this.i(intern(n.target.name)); this.arglist(n.args); this.call('builtin');
           } else throw new PseudoError('Invalid call target', n.line);
@@ -198,9 +188,17 @@ export function compileAst(ast) {
   const typeSection = section(1, [...u(typeSigs.length), ...typeSigs.flatMap(([params, result]) => [0x60, ...bytes(params), ...bytes(result)])]);
   const importSection = section(2, [...u(IMPORTS.length), ...IMPORTS.flatMap((x, i) => [...utf('env'), ...utf(x[0]), 0x00, ...u(i)])]);
   const functionSection = section(3, [...u(routines.length + 1), ...routines.map(() => IMPORTS.length), IMPORTS.length + 1]);
+  const staticData = [];
+  for (const value of strings) {
+    const encoded = enc.encode(value), length = encoded.length;
+    staticData.push(length & 255, (length >>> 8) & 255, (length >>> 16) & 255, (length >>> 24) & 255, ...encoded);
+    while (staticData.length & 3) staticData.push(0);
+  }
+  const memorySection = section(5, [1, 0, ...u(Math.max(1, Math.ceil((8 + staticData.length) / 65536)))]);
   const exports = routines.map((n, i) => [n.exportName, IMPORTS.length + i]).concat([['main', IMPORTS.length + routines.length]]);
-  const exportSection = section(7, [...u(exports.length), ...exports.flatMap(([name, index]) => [...utf(name), 0x00, ...u(index)])]);
+  const exportSection = section(7, [...u(exports.length + 1), ...exports.flatMap(([name, index]) => [...utf(name), 0x00, ...u(index)]), ...utf('memory'), 0x02, 0]);
   const codeSection = section(10, [...u(bodies.length + 1), ...bodies.flat(), ...main]);
-  const binary = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0, ...typeSection, ...importSection, ...functionSection, ...exportSection, ...codeSection]);
+  const dataSection = section(11, [1, 0, 0x41, 8, 0x0b, ...bytes(staticData)]);
+  const binary = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0, ...typeSection, ...importSection, ...functionSection, ...memorySection, ...exportSection, ...codeSection, ...dataSection]);
   return { binary, strings, types, classes, routines, ast };
 }

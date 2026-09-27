@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { compile, run, PseudoError } from '../src/index.js';
+import { compile, run, createRuntime, PseudoError } from '../src/index.js';
 
 async function output(source, options) {
   const built = compile(source);
@@ -15,6 +15,20 @@ X ← 11 DIV 3 + 11 MOD 3
 OUTPUT X, " ", MID("ABCDEFG", 2, 3)
 OUTPUT NOT FALSE, " ", 3 < 4 AND 4 <> 5
 `), ['5 BCD', 'TRUE TRUE']);
+});
+
+test('strings are UTF-8 in exported linear memory, and long concatenations grow it', async () => {
+  const built = compile('DECLARE S : STRING\nS ← "café" & "!"\nOUTPUT S\n');
+  assert.ok(WebAssembly.Module.exports(new WebAssembly.Module(built.binary)).some(item => item.name === 'memory' && item.kind === 'memory'));
+  assert.ok(Buffer.from(built.binary).includes(Buffer.from('café', 'utf8')));
+  const result = await run('DECLARE S : STRING\nS ← "café" & "!"\nOUTPUT S\n');
+  assert.deepEqual(result.output, ['café!']);
+  const bytes = new Uint8Array(result.memory.buffer, 0, result.stringBytes);
+  assert.ok(Buffer.from(bytes).includes(Buffer.from('café!', 'utf8')));
+  const grown = await run('DECLARE S : STRING\nDECLARE I : INTEGER\nFOR I ← 1 TO 70000\n  S ← S & "x"\nNEXT I\nOUTPUT LENGTH(S)\nOUTPUT S\n', { maxSteps: 500000 });
+  assert.equal(grown.output[0], '70000');
+  assert.equal(grown.output[1].length, 70000);
+  assert.ok(grown.memory.buffer.byteLength > 65536);
 });
 
 test('nested control flow and downward FOR', async () => {
@@ -86,6 +100,80 @@ OUTPUT Result
 `), ['121']);
 });
 
+test('BYREF uses a WASM memory address for numeric cells', async () => {
+  const built = compile(`PROCEDURE Increase(BYREF N : INTEGER)
+  N ← N + 1
+ENDPROCEDURE
+DECLARE X : INTEGER
+X ← 41
+CALL Increase(X)
+OUTPUT X
+`);
+  const runtime = createRuntime(built);
+  const result = await runtime.run();
+  assert.deepEqual(result.output, ['42']);
+  const id = built.strings.indexOf('X');
+  const address = runtime.env.refName(id);
+  assert.equal(typeof address, 'bigint');
+  const view = new DataView(result.memory.buffer);
+  assert.equal(view.getUint32(Number(address), true), 1);
+  assert.equal(view.getFloat64(Number(address) + 8, true), 42);
+  runtime.env.set(id, 17);
+  assert.equal(view.getFloat64(Number(address) + 8, true), 17);
+});
+
+test('BYREF string slots point to UTF-8 bytes after concatenation', async () => {
+  const built = compile(`PROCEDURE Exclaim(BYREF Text : STRING)
+  Text ← Text & "!"
+ENDPROCEDURE
+DECLARE Message : STRING
+Message ← "café"
+CALL Exclaim(Message)
+OUTPUT Message
+`);
+  const runtime = createRuntime(built);
+  const result = await runtime.run();
+  assert.deepEqual(result.output, ['café!']);
+  const address = Number(runtime.env.refName(built.strings.indexOf('MESSAGE')));
+  const view = new DataView(result.memory.buffer);
+  assert.equal(view.getUint32(address, true), 3);
+  const pointer = view.getUint32(address + 4, true);
+  const byteLength = view.getUint32(pointer, true);
+  assert.equal(new TextDecoder().decode(new Uint8Array(result.memory.buffer, pointer + 4, byteLength)), 'café!');
+});
+
+test('BYREF array aliases and pointer dereferences keep their target', async () => {
+  assert.deepEqual(await output(`PROCEDURE Increase(BYREF N : INTEGER)
+  N ← N + 1
+ENDPROCEDURE
+DECLARE Values : ARRAY[1:2] OF INTEGER
+DECLARE P : ^INTEGER
+Values[2] ← 8
+CALL Increase(Values[2])
+P ← ^Values[2]
+P^ ← P^ + 1
+OUTPUT Values[2]
+`), ['10']);
+});
+
+test('nested BYREF aliases keep one address and recycle temporary slots', async () => {
+  const result = await run(`PROCEDURE Deep(BYREF N : INTEGER, Level : INTEGER)
+  IF Level > 0 THEN
+    CALL Deep(N, Level - 1)
+  ENDIF
+  N ← N + 1
+ENDPROCEDURE
+DECLARE Values : ARRAY[1:1] OF INTEGER
+DECLARE I : INTEGER
+FOR I ← 1 TO 1000
+  CALL Deep(Values[1], 2)
+NEXT I
+OUTPUT Values[1]
+`, { maxSteps: 100000 });
+  assert.deepEqual(result.output, ['3000']);
+  assert.ok(result.stringBytes < 4096, 'temporary reference slots are reused');
+});
+
 test('text file operations and input', async () => {
   const result = await run(`
 DECLARE Line : STRING
@@ -130,6 +218,22 @@ DECLARE C : DoubleCounter
 C ← NEW DoubleCounter(5)
 CALL C.Increment()
 OUTPUT C.Current()
+`), ['7']);
+});
+
+test('BYREF class methods update caller variables', async () => {
+  assert.deepEqual(await output(`
+CLASS Accumulator
+  PUBLIC PROCEDURE Add(BYREF Target : INTEGER, Amount : INTEGER)
+    Target ← Target + Amount
+  ENDPROCEDURE
+ENDCLASS
+DECLARE A : Accumulator
+DECLARE N : INTEGER
+A ← NEW Accumulator()
+N ← 4
+CALL A.Add(N, 3)
+OUTPUT N
 `), ['7']);
 });
 
@@ -204,3 +308,6 @@ test('bad source reports line and execution limit', async () => {
   assert.throws(() => compile('DECLARE X INTEGER'), PseudoError);
   await assert.rejects(run('WHILE TRUE\nENDWHILE', { maxSteps: 20 }), /Execution limit/);
 });
+
+await import('./examples.test.js');
+await import('./bootstrap.test.js');
