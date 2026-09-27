@@ -25,6 +25,7 @@ function normalizeProject(raw) {
   const sourceFiles = raw?.sourceFiles && typeof raw.sourceFiles === 'object' ? { ...raw.sourceFiles } : { 'main.pseudo': typeof raw?.source === 'string' ? raw.source : examples[0].code };
   const names = Object.keys(sourceFiles);
   if (!names.length) sourceFiles['main.pseudo'] = examples[0].code;
+  const fileOrder = [...new Set([...(Array.isArray(raw?.fileOrder) ? raw.fileOrder : []), ...Object.keys(sourceFiles)])].filter(name => Object.hasOwn(sourceFiles, name));
   const first = Object.keys(sourceFiles)[0];
   const oldPanes = raw?.panes || {};
   const primaryTabs = (oldPanes.primary?.tabs || [first]).filter(n => Object.hasOwn(sourceFiles, n));
@@ -33,7 +34,7 @@ function normalizeProject(raw) {
   const secondaryActive = secondaryTabs.includes(oldPanes.secondary?.active) ? oldPanes.secondary.active : secondaryTabs[0] || null;
   const layout = raw?.layout || {};
   return {
-    sourceFiles, panes: { primary: { tabs: primaryTabs, active: primaryActive }, secondary: { tabs: secondaryTabs, active: secondaryActive } },
+    sourceFiles, fileOrder, panes: { primary: { tabs: primaryTabs, active: primaryActive }, secondary: { tabs: secondaryTabs, active: secondaryActive } },
     activePane: raw?.activePane === 'secondary' && secondaryActive ? 'secondary' : 'primary',
     split: !!raw?.split && !!secondaryActive,
     input: String(raw?.input || ''), files: raw?.files && typeof raw.files === 'object' ? raw.files : {}, records: raw?.records && typeof raw.records === 'object' ? raw.records : {},
@@ -45,6 +46,7 @@ try { saved = JSON.parse(localStorage.getItem(STORAGE) || localStorage.getItem('
 let project = normalizeProject(saved);
 let selectedDataFile = null, lastCompiled = null, builtFile = null, builtSource = null, buildInfo = null;
 let problemsByFile = {}, activeConsole = 'output', consoleLines = [], waitingInput = null, runToken = 0, saveTimer = null, diagnoseTimer = null;
+let draggedFile = null;
 
 const activeName = () => project.panes[project.activePane].active;
 const activeSource = () => project.sourceFiles[activeName()] ?? '';
@@ -67,6 +69,102 @@ function save() {
   try { localStorage.setItem(STORAGE, JSON.stringify(project)); $('save-state').textContent = 'Saved locally'; } catch { $('save-state').textContent = 'Storage unavailable'; }
 }
 function scheduleSave() { $('save-state').textContent = 'Saving…'; clearTimeout(saveTimer); saveTimer = setTimeout(save, 300); }
+function showToast(message) {
+  const toast = document.createElement('div'); toast.className = 'workspace-toast'; toast.textContent = message;
+  $('toast-container').append(toast);
+  setTimeout(() => toast.remove(), 4500);
+}
+function showWorkspaceDialog({ title, description, label, value = '', submitLabel = 'Save', danger = false, validate, onSubmit }) {
+  hideContextMenu();
+  const dialog = $('workspace-dialog'), form = $('workspace-dialog-form'), input = $('dialog-input'), error = $('dialog-error');
+  const previousFocus = document.activeElement;
+  $('dialog-title').textContent = title;
+  $('dialog-description').textContent = description || '';
+  $('dialog-description').hidden = !description;
+  $('dialog-input-label').textContent = label || '';
+  $('dialog-input-label').hidden = !label;
+  input.hidden = !label; input.value = value;
+  error.hidden = true; error.textContent = '';
+  $('dialog-submit').textContent = submitLabel;
+  $('dialog-submit').classList.toggle('danger', danger);
+  form.onsubmit = event => {
+    event.preventDefault();
+    const result = label ? input.value.trim() : null;
+    const problem = validate?.(result);
+    if (problem) { error.textContent = problem; error.hidden = false; input.focus(); return; }
+    dialog.close(); onSubmit(result);
+  };
+  dialog.onclose = () => { form.onsubmit = null; previousFocus?.focus?.(); };
+  dialog.showModal();
+  if (label) { input.focus(); input.select(); } else $('dialog-submit').focus();
+}
+function hideContextMenu(restoreFocus = false) {
+  const menu = $('editor-context-menu');
+  if (menu.hidden) return;
+  menu.hidden = true; menu.replaceChildren();
+  if (restoreFocus) menu._invoker?.focus?.();
+  menu._invoker = null;
+}
+function closeOtherTabs(which, name) {
+  const state = project.panes[which]; state.tabs = [name]; state.active = name; project.activePane = which;
+  renderWorkspace(); scheduleSave();
+}
+function closeTabsToRight(which, name) {
+  const state = project.panes[which], index = state.tabs.indexOf(name);
+  if (index < 0) return;
+  state.tabs = state.tabs.slice(0, index + 1); state.active = name; project.activePane = which;
+  renderWorkspace(); scheduleSave();
+}
+function duplicateSource(name, which = project.activePane) {
+  const copy = uniqueFilename(name); project.sourceFiles[copy] = project.sourceFiles[name];
+  project.fileOrder = insertFileAt(project.fileOrder, copy, name, true);
+  openSource(copy, which);
+}
+function downloadSource(name) { downloadBlob(new Blob([project.sourceFiles[name]], { type: 'text/plain;charset=utf-8' }), name); }
+function showFileContextMenu(event, name, which = null) {
+  if (!Object.hasOwn(project.sourceFiles, name)) return;
+  event.preventDefault(); event.stopPropagation(); hideContextMenu();
+  const menu = $('editor-context-menu'); menu._invoker = event.currentTarget;
+  const addAction = (label, action, { danger = false, disabled = false } = {}) => {
+    const button = document.createElement('button'); button.type = 'button'; button.role = 'menuitem'; button.textContent = label;
+    button.disabled = disabled; button.className = danger ? 'context-danger' : '';
+    button.addEventListener('click', () => { hideContextMenu(true); action(); }); menu.append(button);
+  };
+  const divider = () => { const line = document.createElement('div'); line.className = 'context-divider'; line.role = 'separator'; menu.append(line); };
+  if (which) {
+    const tabs = project.panes[which].tabs, index = tabs.indexOf(name);
+    addAction('Close', () => closeTab(which, name));
+    addAction('Close Others', () => closeOtherTabs(which, name), { disabled: tabs.length < 2 });
+    addAction('Close to the Right', () => closeTabsToRight(which, name), { disabled: index === tabs.length - 1 });
+    divider();
+  } else addAction('Open', () => openSource(name));
+  addAction(which ? 'Open in Other Editor' : 'Open to Side', () => openSource(name, which ? (which === 'primary' ? 'secondary' : 'primary') : (project.activePane === 'primary' ? 'secondary' : 'primary')));
+  divider();
+  addAction('Rename', () => renameSource(name));
+  addAction('Duplicate', () => duplicateSource(name, which || project.activePane));
+  addAction('Download .pseudo', () => downloadSource(name));
+  divider();
+  addAction('Delete', () => deleteSource(name), { danger: true });
+  menu.hidden = false;
+  const anchor = event.currentTarget.getBoundingClientRect(), x = event.clientX || anchor.left + 16, y = event.clientY || anchor.bottom;
+  menu.style.left = `${Math.max(8, Math.min(x, innerWidth - menu.offsetWidth - 8))}px`;
+  menu.style.top = `${Math.max(8, Math.min(y, innerHeight - menu.offsetHeight - 8))}px`;
+  menu.querySelector('button:not(:disabled)')?.focus();
+}
+function installContextMenu() {
+  const menu = $('editor-context-menu');
+  document.addEventListener('pointerdown', event => { if (!menu.hidden && !menu.contains(event.target)) hideContextMenu(); });
+  window.addEventListener('resize', () => hideContextMenu());
+  menu.addEventListener('keydown', event => {
+    if (event.key === 'Escape') { event.preventDefault(); hideContextMenu(true); return; }
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    const buttons = [...menu.querySelectorAll('button:not(:disabled)')], index = buttons.indexOf(document.activeElement);
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length;
+    buttons[next]?.focus();
+  });
+  document.addEventListener('keydown', event => { if (event.key === 'Escape' && !menu.hidden) { event.preventDefault(); hideContextMenu(true); } });
+}
 function applyLayout() {
   const l = project.layout;
   const explorerWidth = l.explorerVisible && innerWidth > 660 ? Math.min(l.explorerWidth, Math.max(150, innerWidth - 400)) : 0;
@@ -92,28 +190,34 @@ function applyLayout() {
 }
 function renderExplorer() {
   const list = $('source-list'); list.replaceChildren();
-  const names = Object.keys(project.sourceFiles);
+  project.fileOrder = [...new Set([...project.fileOrder, ...Object.keys(project.sourceFiles)])].filter(name => Object.hasOwn(project.sourceFiles, name));
+  const names = project.fileOrder;
   $('source-count').textContent = String(names.length).padStart(2, '0');
   for (const name of names) {
-    const item = document.createElement('button'); item.className = `source-item${name === activeName() ? ' active' : ''}`; item.title = `Open ${name}. Alt-click to open in the other editor.`;
+    const item = document.createElement('button'); item.className = `source-item${name === activeName() ? ' active' : ''}`; item.title = `Open ${name}. Drag to reorder or open in an editor. Alt-click to open in the other editor.`; item.draggable = true; item.dataset.file = name;
     const glyph = document.createElement('span'); glyph.className = 'file-glyph'; glyph.textContent = '◇';
     const label = document.createElement('span'); label.className = 'source-item-name'; label.textContent = name;
     item.append(glyph, label);
     if (project.panes.primary.tabs.includes(name) || project.panes.secondary.tabs.includes(name)) { const dot = document.createElement('span'); dot.className = 'open-indicator'; dot.textContent = '●'; item.append(dot); }
     item.addEventListener('click', event => openSource(name, event.altKey ? (project.activePane === 'primary' ? 'secondary' : 'primary') : project.activePane));
+    item.addEventListener('contextmenu', event => showFileContextMenu(event, name));
+    item.addEventListener('keydown', event => { if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) showFileContextMenu(event, name); });
+    item.addEventListener('dragstart', event => beginFileDrag(event, name, null));
     list.append(item);
   }
 }
 function renderTabs(which) {
   const state = project.panes[which], root = panes[which].tabs; root.replaceChildren();
   for (const name of state.tabs) {
-    const tab = document.createElement('div'); tab.className = `source-tab${state.active === name ? ' active' : ''}`; tab.setAttribute('role', 'tab'); tab.setAttribute('aria-selected', String(state.active === name)); tab.tabIndex = 0; tab.title = name;
+    const tab = document.createElement('div'); tab.className = `source-tab${state.active === name ? ' active' : ''}`; tab.setAttribute('role', 'tab'); tab.setAttribute('aria-selected', String(state.active === name)); tab.tabIndex = 0; tab.title = `Drag to reorder or move ${name} to another editor`; tab.draggable = true; tab.dataset.file = name;
     const glyph = document.createElement('span'); glyph.className = 'file-glyph'; glyph.textContent = '◇';
     const label = document.createElement('span'); label.className = 'source-tab-name'; label.textContent = name;
     const close = document.createElement('button'); close.className = 'tab-close'; close.type = 'button'; close.setAttribute('aria-label', `Close ${name} in ${which} editor`); close.textContent = '×';
     close.addEventListener('click', event => { event.stopPropagation(); closeTab(which, name); });
     tab.addEventListener('click', () => openSource(name, which));
-    tab.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openSource(name, which); } });
+    tab.addEventListener('keydown', event => { if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) showFileContextMenu(event, name, which); else if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openSource(name, which); } });
+    tab.addEventListener('contextmenu', event => showFileContextMenu(event, name, which));
+    tab.addEventListener('dragstart', event => beginFileDrag(event, name, which));
     tab.append(glyph, label, close); root.append(tab);
   }
 }
@@ -161,6 +265,90 @@ function openSource(name, which = project.activePane) {
   state.active = name; project.activePane = which;
   renderWorkspace(); scheduleSave(); panes[which].editor.focus();
 }
+function insertFileAt(list, name, target, after) {
+  if (target === name && list.includes(name)) return list;
+  const next = list.filter(item => item !== name);
+  const index = target ? next.indexOf(target) : -1;
+  next.splice(index < 0 ? next.length : index + Number(after), 0, name);
+  return next;
+}
+function beginFileDrag(event, name, fromPane) {
+  if (!event.dataTransfer || !Object.hasOwn(project.sourceFiles, name)) return;
+  draggedFile = { name, fromPane };
+  event.dataTransfer.effectAllowed = 'move';
+  event.dataTransfer.setData('text/plain', name);
+  event.currentTarget.classList.add('dragging-source');
+  $('editor-area').classList.add('dragging-file');
+}
+function clearDropFeedback() {
+  document.querySelectorAll('.drop-before, .drop-after, .drop-target, .drop-split').forEach(node => node.classList.remove('drop-before', 'drop-after', 'drop-target', 'drop-split'));
+}
+function endFileDrag() {
+  draggedFile = null;
+  clearDropFeedback();
+  $('editor-area').classList.remove('dragging-file');
+  document.querySelectorAll('.dragging-source').forEach(node => node.classList.remove('dragging-source'));
+}
+function placeFileInEditor(name, which, target = null, after = true, fromPane = null) {
+  if (!Object.hasOwn(project.sourceFiles, name)) return;
+  if (fromPane) {
+    const source = project.panes[fromPane], oldIndex = source.tabs.indexOf(name);
+    if (fromPane !== which && oldIndex >= 0) {
+      source.tabs.splice(oldIndex, 1);
+      if (source.active === name) source.active = source.tabs[Math.min(oldIndex, source.tabs.length - 1)] || null;
+    }
+  }
+  const destination = project.panes[which];
+  destination.tabs = insertFileAt(destination.tabs, name, target, after);
+  destination.active = name;
+  project.activePane = which;
+  if (which === 'secondary') project.split = true;
+  else if (fromPane === 'secondary' && !project.panes.secondary.tabs.length) project.split = false;
+  renderWorkspace(); scheduleSave();
+}
+function editorDropPosition(event) {
+  const tab = event.target.closest('.source-tab');
+  const group = event.target.closest('.editor-group');
+  let which = group?.id === 'secondary-group' ? 'secondary' : 'primary';
+  if (!project.split && !tab) {
+    const rect = $('editor-area').getBoundingClientRect();
+    if (event.clientX > rect.left + rect.width * .68) which = 'secondary';
+  }
+  const rect = tab?.getBoundingClientRect();
+  return { which, target: tab?.dataset.file || null, after: rect ? event.clientX >= rect.left + rect.width / 2 : true };
+}
+function installFileDragTargets() {
+  const list = $('source-list'), area = $('editor-area');
+  list.addEventListener('dragover', event => {
+    if (!draggedFile) return;
+    event.preventDefault(); event.dataTransfer.dropEffect = 'move'; clearDropFeedback();
+    const item = event.target.closest('.source-item');
+    if (item) { const rect = item.getBoundingClientRect(); item.classList.add(event.clientY < rect.top + rect.height / 2 ? 'drop-before' : 'drop-after'); }
+    else list.classList.add('drop-target');
+  });
+  list.addEventListener('drop', event => {
+    if (!draggedFile) return;
+    event.preventDefault();
+    const item = event.target.closest('.source-item'), rect = item?.getBoundingClientRect();
+    project.fileOrder = insertFileAt(project.fileOrder, draggedFile.name, item?.dataset.file, rect ? event.clientY >= rect.top + rect.height / 2 : true);
+    endFileDrag(); renderExplorer(); scheduleSave();
+  });
+  area.addEventListener('dragover', event => {
+    if (!draggedFile) return;
+    event.preventDefault(); event.dataTransfer.dropEffect = 'move'; clearDropFeedback();
+    const position = editorDropPosition(event);
+    if (position.target) event.target.closest('.source-tab').classList.add(position.after ? 'drop-after' : 'drop-before');
+    else if (position.which === 'secondary' && !project.split) area.classList.add('drop-split');
+    else panes[position.which].group.classList.add('drop-target');
+  });
+  area.addEventListener('drop', event => {
+    if (!draggedFile) return;
+    event.preventDefault();
+    const position = editorDropPosition(event), { name, fromPane } = draggedFile;
+    endFileDrag(); placeFileInEditor(name, position.which, position.target, position.after, fromPane);
+  });
+  document.addEventListener('dragend', endFileDrag);
+}
 function closeTab(which, name) {
   const state = project.panes[which], index = state.tabs.indexOf(name);
   if (index < 0) return;
@@ -184,29 +372,37 @@ function uniqueFilename(name) {
   return `${base}-${i}.pseudo`;
 }
 function newSource() {
-  const name = validFilename(prompt('New pseudocode filename', 'untitled.pseudo'));
-  if (!name) return;
-  if (Object.hasOwn(project.sourceFiles, name)) { alert(`${name} already exists.`); return; }
-  project.sourceFiles[name] = ''; openSource(name);
+  showWorkspaceDialog({ title: 'New pseudocode file', description: 'Create a file in this workspace.', label: 'Filename', value: 'untitled.pseudo', submitLabel: 'Create file',
+    validate: name => !validFilename(name) ? 'Enter a filename ending in .pseudo.' : Object.hasOwn(project.sourceFiles, name) ? 'A file with this name already exists.' : null,
+    onSubmit: name => { project.sourceFiles[name] = ''; openSource(name); } });
 }
-function renameSource() {
-  const old = activeName(); if (!old) return;
-  const name = validFilename(prompt('Rename pseudocode file', old)); if (!name || name === old) return;
-  if (Object.hasOwn(project.sourceFiles, name)) { alert(`${name} already exists.`); return; }
-  const entries = Object.entries(project.sourceFiles).map(([k, v]) => [k === old ? name : k, v]); project.sourceFiles = Object.fromEntries(entries);
-  for (const state of Object.values(project.panes)) { state.tabs = state.tabs.map(k => k === old ? name : k); if (state.active === old) state.active = name; }
-  if (problemsByFile[old]) { problemsByFile[name] = problemsByFile[old]; delete problemsByFile[old]; }
-  if (builtFile === old) builtFile = name;
-  renderWorkspace(); scheduleSave();
+function renameSource(old = activeName()) {
+  if (!old || !Object.hasOwn(project.sourceFiles, old)) return;
+  showWorkspaceDialog({ title: 'Rename file', description: `Rename ${old} in this workspace.`, label: 'Filename', value: old, submitLabel: 'Rename',
+    validate: name => !validFilename(name) ? 'Enter a filename ending in .pseudo.' : name !== old && Object.hasOwn(project.sourceFiles, name) ? 'A file with this name already exists.' : null,
+    onSubmit: name => {
+      if (name === old) return;
+      const entries = Object.entries(project.sourceFiles).map(([k, v]) => [k === old ? name : k, v]); project.sourceFiles = Object.fromEntries(entries);
+      project.fileOrder = project.fileOrder.map(k => k === old ? name : k);
+      for (const state of Object.values(project.panes)) { state.tabs = state.tabs.map(k => k === old ? name : k); if (state.active === old) state.active = name; }
+      if (problemsByFile[old]) { problemsByFile[name] = problemsByFile[old]; delete problemsByFile[old]; }
+      if (builtFile === old) builtFile = name;
+      renderWorkspace(); scheduleSave();
+    } });
 }
-function deleteSource() {
-  const name = activeName(); if (!name || !confirm(`Delete ${name} from this workspace?`)) return;
+function removeSource(name) {
   delete project.sourceFiles[name]; delete problemsByFile[name];
+  project.fileOrder = project.fileOrder.filter(k => k !== name);
   for (const state of Object.values(project.panes)) { state.tabs = state.tabs.filter(k => k !== name); if (state.active === name) state.active = state.tabs.at(-1) || null; }
-  if (project.split && !project.panes.secondary.tabs.length) closeSplit();
+  if (builtFile === name) { builtFile = null; builtSource = null; lastCompiled = null; }
+  if (project.split && !project.panes.secondary.tabs.length) project.split = false;
   if (!Object.keys(project.sourceFiles).length) { project.sourceFiles['main.pseudo'] = ''; project.panes.primary.tabs = ['main.pseudo']; project.panes.primary.active = 'main.pseudo'; }
-  if (!project.panes[project.activePane].active) project.activePane = 'primary';
+  if (!project.panes[project.activePane].active || (project.activePane === 'secondary' && !project.split)) project.activePane = 'primary';
   renderWorkspace(); scheduleSave();
+}
+function deleteSource(name = activeName()) {
+  if (!name || !Object.hasOwn(project.sourceFiles, name)) return;
+  showWorkspaceDialog({ title: 'Delete file', description: `Delete ${name} from this workspace? This removes its saved source code.`, submitLabel: 'Delete file', danger: true, onSubmit: () => removeSource(name) });
 }
 function setProblems(name, items) {
   if (name) problemsByFile[name] = items;
@@ -339,11 +535,15 @@ for (const which of ['primary', 'secondary']) {
 $('example-count').textContent = String(examples.length).padStart(2, '0');
 for (const example of examples) { const button = document.createElement('button'); button.className = 'example-item'; button.innerHTML = `<span class="example-icon">◇</span><span>${escape(example.name)}</span>`; button.addEventListener('click', () => { const name = uniqueFilename(example.filename); project.sourceFiles[name] = example.code; openSource(name); }); $('example-list').append(button); }
 $('stdin').value = project.input;
+$('dialog-cancel').addEventListener('click', () => $('workspace-dialog').close());
 $('stdin').addEventListener('input', scheduleSave);
 $('file-editor').addEventListener('input', () => { if (selectedDataFile) { project.files[selectedDataFile] = $('file-editor').value; scheduleSave(); } });
-$('add-file').addEventListener('click', () => { const name = prompt('Data filename (for example, data.txt)'); if (!name) return; if (!/^[\w. -]+$/.test(name)) { alert('Use letters, numbers, spaces, dots, underscores, or hyphens.'); return; } project.files[name] ??= ''; selectedDataFile = name; renderDataFiles(); save(); });
-$('remove-file').addEventListener('click', () => { if (!selectedDataFile || !confirm(`Delete ${selectedDataFile}?`)) return; delete project.files[selectedDataFile]; selectedDataFile = null; renderDataFiles(); save(); });
-$('new-source').addEventListener('click', newSource); $('rename-source').addEventListener('click', renameSource); $('delete-source').addEventListener('click', deleteSource);
+$('add-file').addEventListener('click', () => showWorkspaceDialog({ title: 'New virtual file', description: 'Programs can read and write this file.', label: 'Filename', value: 'data.txt', submitLabel: 'Create file',
+  validate: name => !name || !/^[\w. -]+$/.test(name) ? 'Use letters, numbers, spaces, dots, underscores, or hyphens.' : Object.hasOwn(project.files, name) ? 'A virtual file with this name already exists.' : null,
+  onSubmit: name => { project.files[name] = ''; selectedDataFile = name; renderDataFiles(); save(); } }));
+$('remove-file').addEventListener('click', () => { const name = selectedDataFile; if (!name) return; showWorkspaceDialog({ title: 'Delete virtual file', description: `Delete ${name} from this workspace?`, submitLabel: 'Delete file', danger: true,
+  onSubmit: () => { delete project.files[name]; selectedDataFile = null; renderDataFiles(); save(); } }); });
+$('new-source').addEventListener('click', newSource); $('rename-source').addEventListener('click', () => renameSource()); $('delete-source').addEventListener('click', () => deleteSource());
 $('import-source').addEventListener('click', () => $('import-file').click()); $('import-button').addEventListener('click', () => $('import-file').click());
 $('import-file').addEventListener('change', async event => {
   const files = [...event.target.files]; if (!files.length) return;
@@ -354,7 +554,7 @@ $('import-file').addEventListener('change', async event => {
       else if (file.name.toLowerCase().endsWith('.pseudo')) { const name = uniqueFilename(validFilename(file.name) || 'imported.pseudo'); project.sourceFiles[name] = content; openSource(name); }
       else { project.files[file.name] = content; selectedDataFile = file.name; renderDataFiles(); save(); }
     }
-  } catch (error) { alert(`Could not open file: ${error.message}`); }
+  } catch (error) { showToast(`Could not open file: ${error.message}`); }
   event.target.value = '';
 });
 $('split-editor').addEventListener('click', splitEditor); $('close-split').addEventListener('click', closeSplit);
@@ -378,6 +578,8 @@ installResizer('left-resizer', 'x', 'explorerWidth', () => 150, () => Math.min(4
 installResizer('right-resizer', 'x', 'toolsWidth', () => 220, () => Math.min(500, innerWidth - 380));
 installResizer('bottom-resizer', 'y', 'bottomHeight', () => 120, () => Math.min(500, innerHeight - 220));
 installSplitResizer();
+installFileDragTargets();
+installContextMenu();
 window.addEventListener('resize', applyLayout);
 renderDataFiles(); renderWorkspace(); renderConsole();
 for (const name of Object.keys(project.sourceFiles)) diagnose(name);

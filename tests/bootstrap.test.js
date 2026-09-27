@@ -113,6 +113,42 @@ ENDCASE
   assert.deepEqual(result.output, ['four']);
 });
 
+test('the self-hosted compiler selects string CASE arms', async () => {
+  const core = await bootstrapped;
+  const source = `DECLARE Choice : STRING
+Choice ← "B"
+CASE OF Choice
+  "A" : OUTPUT "first"
+  "B" : OUTPUT "second"
+  OTHERWISE : OUTPUT "other"
+ENDCASE
+`;
+  const built = await compileSelfHosted(source, core);
+  const result = await createRuntime(built).run();
+  assert.deepEqual(result.output, ['second']);
+});
+
+test('the self-hosted compiler supports nested CASE blocks', async () => {
+  const core = await bootstrapped;
+  const source = `DECLARE A : INTEGER
+DECLARE B : STRING
+A ← 2
+B ← "Y"
+CASE OF A
+  1 : OUTPUT "wrong"
+  2 :
+    CASE OF B
+      "X" : OUTPUT "wrong"
+      "Y" : OUTPUT "nested"
+    ENDCASE
+  OTHERWISE : OUTPUT "wrong"
+ENDCASE
+`;
+  const built = await compileSelfHosted(source, core);
+  const result = await createRuntime(built).run();
+  assert.deepEqual(result.output, ['nested']);
+});
+
 test('the self-hosted compiler creates records and accesses fields', async () => {
   const core = await bootstrapped;
   const source = `TYPE TStudent
@@ -363,4 +399,14 @@ test('the self-hosted compiler resolves named array bounds in type aliases', asy
   const built = await compileSelfHosted(source, core);
   const result = await createRuntime(built).run();
   assert.deepEqual(result.output, ['12']);
+});
+
+test('the self-hosted assembler encodes large routine counts and indices', async () => {
+  const core = await bootstrapped;
+  const source = Array.from({ length: 130 }, (_, i) =>
+    `PROCEDURE P${i}()\n  OUTPUT ${i}\nENDPROCEDURE\n`).join('') + 'CALL P129()\n';
+  const built = await compileSelfHosted(source, core);
+  assert.equal(WebAssembly.validate(built.binary), true);
+  const result = await createRuntime(built).run();
+  assert.deepEqual(result.output, ['129']);
 });

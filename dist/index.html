@@ -41,6 +41,7 @@
         <div class="sidebar-title">EXPLORER <span class="sidebar-title-actions"><button id="new-source" title="New pseudocode file" aria-label="New pseudocode file">＋</button><button id="import-source" title="Import pseudocode files" aria-label="Import pseudocode files">⇧</button></span></div>
         <div class="sidebar-heading">PSEUDO2WASM <span id="source-count">01</span></div>
         <div id="source-list" class="source-list"></div>
+        <div class="source-drag-hint">Drag files to reorder or open in an editor</div>
         <div class="sidebar-file-actions"><button id="rename-source" title="Rename active file">Rename</button><button id="delete-source" title="Delete active file">Delete</button></div>
         <div class="sidebar-heading examples-heading">EXAMPLES <span id="example-count">09</span></div>
         <div id="example-list" class="example-list"></div>
@@ -120,6 +121,18 @@
         <div class="inspector-build"><span class="build-label">LAST BUILD</span><span id="build-status">No build yet</span><span id="build-size">—</span></div>
       </aside>
     </div>
+    <div id="editor-context-menu" class="editor-context-menu" role="menu" aria-label="File actions" hidden></div>
+    <dialog id="workspace-dialog" class="workspace-dialog" aria-labelledby="dialog-title">
+      <form id="workspace-dialog-form" method="dialog">
+        <div class="dialog-heading"><span class="dialog-mark">◇</span><h2 id="dialog-title"></h2></div>
+        <p id="dialog-description" class="dialog-description"></p>
+        <label id="dialog-input-label" for="dialog-input"></label>
+        <input id="dialog-input" type="text" autocomplete="off" spellcheck="false">
+        <p id="dialog-error" class="dialog-error" role="alert" hidden></p>
+        <div class="dialog-actions"><button id="dialog-cancel" type="button" class="dialog-button dialog-cancel">Cancel</button><button id="dialog-submit" type="submit" class="dialog-button dialog-submit">Save</button></div>
+      </form>
+    </dialog>
+    <div id="toast-container" class="toast-container" role="status" aria-live="polite"></div>
   </div>
   <script type="module" src="./app.js"></script>
 </body>

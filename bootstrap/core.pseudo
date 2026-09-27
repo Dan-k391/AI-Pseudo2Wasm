@@ -58,6 +58,10 @@ DECLARE FOR_SEPARATOR : INTEGER
 DECLARE CASE_ACTIVE : INTEGER
 DECLARE CASE_ARMS : INTEGER
 DECLARE CASE_EXPR : STRING
+// Save the enclosing CASE while compiling a nested selection.
+DECLARE CASE_STACK : STRING
+DECLARE CASE_ENTRY : STRING
+DECLARE CASE_SPLIT : INTEGER
 DECLARE CASE_HEADER : STRING
 DECLARE CASE_BODY : STRING
 DECLARE CASE_INSERT : STRING
@@ -128,6 +132,7 @@ FOR_COUNTER ← 0
 FOR_STACK ← ""
 CASE_ACTIVE ← 0
 CASE_ARMS ← 0
+CASE_STACK ← ""
 TYPE_RECORD ← 0
 ROUTINE_COUNT ← 0
 ROUTINE_MAP ← ""
@@ -222,6 +227,10 @@ WHILE POSITION <= LENGTH(SOURCE)
   ENDIF
   IF MODE = "" THEN
     IF LEFT(LINE, 8) = "CASE OF " THEN
+      IF CASE_ACTIVE = 1 THEN
+        CASE_STACK ← CASE_STACK & CASE_EXPR & CHR(31)
+        CASE_STACK ← CASE_STACK & NUM_TO_STR(CASE_ARMS) & CHR(30)
+      ENDIF
       CASE_ACTIVE ← 1
       CASE_ARMS ← 0
       LINE_LENGTH ← LENGTH(LINE)
@@ -249,6 +258,29 @@ WHILE POSITION <= LENGTH(SOURCE)
         SOURCE ← SOURCE & RIGHT_PART
       ENDIF
       CASE_ACTIVE ← 0
+      IF CASE_STACK <> "" THEN
+        CASE_SPLIT ← 0
+        INDEX ← 1
+        WHILE INDEX < LENGTH(CASE_STACK)
+          IF MID(CASE_STACK, INDEX, 1) = CHR(30) THEN
+            CASE_SPLIT ← INDEX
+          ENDIF
+          INDEX ← INDEX + 1
+        ENDWHILE
+        CASE_ENTRY ← MID(CASE_STACK, CASE_SPLIT + 1, LENGTH(CASE_STACK) - CASE_SPLIT - 1)
+        CASE_STACK ← LEFT(CASE_STACK, CASE_SPLIT)
+        CASE_SPLIT ← 0
+        INDEX ← 1
+        WHILE INDEX <= LENGTH(CASE_ENTRY)
+          IF MID(CASE_ENTRY, INDEX, 1) = CHR(31) THEN
+            CASE_SPLIT ← INDEX
+          ENDIF
+          INDEX ← INDEX + 1
+        ENDWHILE
+        CASE_EXPR ← LEFT(CASE_ENTRY, CASE_SPLIT - 1)
+        CASE_ARMS ← STR_TO_NUM(MID(CASE_ENTRY, CASE_SPLIT + 1, LENGTH(CASE_ENTRY)))
+        CASE_ACTIVE ← 1
+      ENDIF
       MODE ← "SKIP"
     ENDIF
   ENDIF
@@ -259,6 +291,9 @@ WHILE POSITION <= LENGTH(SOURCE)
         CASE_COLON ← 1
       ENDIF
       IF IS_NUM(LEFT(LINE, 1)) THEN
+        CASE_COLON ← 1
+      ENDIF
+      IF LEFT(LINE, 1) = CHR(34) OR LEFT(LINE, 1) = CHR(39) THEN
         CASE_COLON ← 1
       ENDIF
       IF CASE_COLON = 1 THEN
@@ -1281,55 +1316,54 @@ WHILE POSITION <= LENGTH(SOURCE)
         FRAME_LENGTH ← FRAME_START - 2
         WORK ← LEFT(WORK, FRAME_LENGTH)
       ENDIF
-      IF FRAME = "F1" THEN
-        OUTPUT "SET"
-        OUTPUT "I:" & FOR_END_NAME
-        FRAME ← "Z"
-      ENDIF
-      IF FRAME = "F2" THEN
-        OUTPUT "SET"
-        OUTPUT "I:" & FOR_STEP_NAME
-        FRAME ← "Z"
-      ENDIF
-      IF FRAME = "F3" THEN
-        OUTPUT "SET"
-        OUTPUT "WHILE"
-        OUTPUT "T:" & NUM_TO_STR(SOURCE_LINE)
-        OUTPUT "I:" & NAME
-        OUTPUT "GET"
-        OUTPUT "I:" & FOR_END_NAME
-        OUTPUT "GET"
-        OUTPUT "I:" & FOR_STEP_NAME
-        OUTPUT "GET"
-        OUTPUT "FOR_TEST"
-        FRAME ← "Z"
-      ENDIF
-      IF FRAME = "J" THEN
-        OUTPUT "INDEX"
-        FRAME ← "Z"
-      ENDIF
-      IF FRAME = "X" THEN
-        OUTPUT "SETINDEX"
-        FRAME ← "Z"
-      ENDIF
-      IF FRAME = "D" THEN
-        OUTPUT "DECLARE"
-        FRAME ← "Z"
-      ENDIF
-      IF FRAME = "Y" THEN
-        OUTPUT "FILEOP"
-        OUTPUT "DROP"
-        FRAME ← "Z"
-      ENDIF
-      IF FRAME = "G" THEN
-        OUTPUT "CREATE"
-        OUTPUT "DECLARE"
-        FRAME ← "Z"
-      ENDIF
-      IF FRAME = "H" THEN
-        OUTPUT "SETFIELD"
-        FRAME ← "Z"
-      ENDIF
+      CASE OF FRAME
+        "F1" :
+          OUTPUT "SET"
+          OUTPUT "I:" & FOR_END_NAME
+          FRAME ← "Z"
+        "F2" :
+          OUTPUT "SET"
+          OUTPUT "I:" & FOR_STEP_NAME
+          FRAME ← "Z"
+        "F3" :
+          OUTPUT "SET"
+          OUTPUT "WHILE"
+          OUTPUT "T:" & NUM_TO_STR(SOURCE_LINE)
+          OUTPUT "I:" & NAME
+          OUTPUT "GET"
+          OUTPUT "I:" & FOR_END_NAME
+          OUTPUT "GET"
+          OUTPUT "I:" & FOR_STEP_NAME
+          OUTPUT "GET"
+          OUTPUT "FOR_TEST"
+          FRAME ← "Z"
+        "J" :
+          OUTPUT "INDEX"
+          FRAME ← "Z"
+        "X" :
+          OUTPUT "SETINDEX"
+          FRAME ← "Z"
+        "D" :
+          OUTPUT "DECLARE"
+          FRAME ← "Z"
+        "Y" :
+          OUTPUT "FILEOP"
+          OUTPUT "DROP"
+          FRAME ← "Z"
+        "G" :
+          OUTPUT "CREATE"
+          OUTPUT "DECLARE"
+          FRAME ← "Z"
+        "H" :
+          OUTPUT "SETFIELD"
+          FRAME ← "Z"
+        "N" :
+          OUTPUT "NEWOBJECT"
+          FRAME ← "Z"
+        "M" :
+          OUTPUT "CALLMETHOD"
+          FRAME ← "Z"
+      ENDCASE
       IF LEFT(FRAME, 3) = "IF:" THEN
         OUTPUT "I:" & MID(FRAME, 4, LENGTH(FRAME))
         FRAME ← "Z"
@@ -1338,14 +1372,6 @@ WHILE POSITION <= LENGTH(SOURCE)
         OUTPUT "INDEX"
         OUTPUT "I:" & MID(FRAME, 4, LENGTH(FRAME))
         OUTPUT "FIELD"
-        FRAME ← "Z"
-      ENDIF
-      IF FRAME = "N" THEN
-        OUTPUT "NEWOBJECT"
-        FRAME ← "Z"
-      ENDIF
-      IF FRAME = "M" THEN
-        OUTPUT "CALLMETHOD"
         FRAME ← "Z"
       ENDIF
       IF LEFT(FRAME, 2) = "R:" THEN
@@ -1361,544 +1387,558 @@ WHILE POSITION <= LENGTH(SOURCE)
         FRAME ← "Z"
       ENDIF
       IF FRAME <> "Z" THEN
-      IF FRAME = "B" THEN
-        OUTPUT "BINARY"
-      ELSE
-        IF FRAME = "P" THEN
-          OUTPUT "PUSH"
-        ELSE
-          IF FRAME = "C" THEN
-            OUTPUT "CALLBUILTIN"
-          ELSE
-            IF FRAME = "V" THEN
-              OUTPUT "UNARY"
-            ELSE
-              IF FRAME = "Q" THEN
-                OUTPUT "OUTPUT"
-              ELSE
-        FRAME_LENGTH ← LENGTH(FRAME)
-        EXPR ← MID(FRAME, 3, FRAME_LENGTH)
-        WHILE LEFT(EXPR, 1) = " "
-          EXPR ← MID(EXPR, 2, LENGTH(EXPR))
-        ENDWHILE
-        WHILE RIGHT(EXPR, 1) = " "
-          EXPR ← LEFT(EXPR, LENGTH(EXPR) - 1)
-        ENDWHILE
-        SPLIT_OUTER ← 1
-        WHILE SPLIT_OUTER = 1
-          SPLIT_OUTER ← 0
-          IF LEFT(EXPR, 1) = "(" THEN
-            IF RIGHT(EXPR, 1) = ")" THEN
+      CASE OF FRAME
+        "B" : OUTPUT "BINARY"
+        "P" : OUTPUT "PUSH"
+        "C" : OUTPUT "CALLBUILTIN"
+        "V" : OUTPUT "UNARY"
+        "Q" : OUTPUT "OUTPUT"
+        OTHERWISE :
+              FRAME_LENGTH ← LENGTH(FRAME)
+              EXPR ← MID(FRAME, 3, FRAME_LENGTH)
+              WHILE LEFT(EXPR, 1) = " "
+                EXPR ← MID(EXPR, 2, LENGTH(EXPR))
+              ENDWHILE
+              WHILE RIGHT(EXPR, 1) = " "
+                EXPR ← LEFT(EXPR, LENGTH(EXPR) - 1)
+              ENDWHILE
               SPLIT_OUTER ← 1
-              DEPTH ← 0
-              IN_STRING ← 0
-              INDEX ← 1
-              WHILE INDEX <= LENGTH(EXPR)
-                CHARACTER ← MID(EXPR, INDEX, 1)
-                IF CHARACTER = CHR(34) THEN
-                  IF IN_STRING = 0 THEN
-                    IN_STRING ← 1
-                  ELSE
+              WHILE SPLIT_OUTER = 1
+                SPLIT_OUTER ← 0
+                IF LEFT(EXPR, 1) = "(" THEN
+                  IF RIGHT(EXPR, 1) = ")" THEN
+                    SPLIT_OUTER ← 1
+                    DEPTH ← 0
                     IN_STRING ← 0
-                  ENDIF
-                ELSE
-                  IF IN_STRING = 0 THEN
-                    IF CHARACTER = "(" THEN
-                      DEPTH ← DEPTH + 1
-                    ENDIF
-                    IF CHARACTER = ")" THEN
-                      DEPTH ← DEPTH - 1
-                    ENDIF
-                    IF DEPTH = 0 THEN
-                      IF INDEX < LENGTH(EXPR) THEN
-                        SPLIT_OUTER ← 0
+                    INDEX ← 1
+                    WHILE INDEX <= LENGTH(EXPR)
+                      CHARACTER ← MID(EXPR, INDEX, 1)
+                      IF CHARACTER = CHR(34) THEN
+                        IF IN_STRING = 0 THEN
+                          IN_STRING ← 1
+                        ELSE
+                          IN_STRING ← 0
+                        ENDIF
+                      ELSE
+                        IF IN_STRING = 0 THEN
+                          IF CHARACTER = "(" THEN
+                            DEPTH ← DEPTH + 1
+                          ENDIF
+                          IF CHARACTER = ")" THEN
+                            DEPTH ← DEPTH - 1
+                          ENDIF
+                          IF DEPTH = 0 THEN
+                            IF INDEX < LENGTH(EXPR) THEN
+                              SPLIT_OUTER ← 0
+                            ENDIF
+                          ENDIF
+                        ENDIF
                       ENDIF
+                      INDEX ← INDEX + 1
+                    ENDWHILE
+                    IF SPLIT_OUTER = 1 THEN
+                      NAME_LENGTH ← LENGTH(EXPR)
+                      NAME_LENGTH ← NAME_LENGTH - 2
+                      EXPR ← MID(EXPR, 2, NAME_LENGTH)
                     ENDIF
                   ENDIF
                 ENDIF
-                INDEX ← INDEX + 1
               ENDWHILE
-              IF SPLIT_OUTER = 1 THEN
-                NAME_LENGTH ← LENGTH(EXPR)
-                NAME_LENGTH ← NAME_LENGTH - 2
-                EXPR ← MID(EXPR, 2, NAME_LENGTH)
-              ENDIF
-            ENDIF
-          ENDIF
-        ENDWHILE
-    OP_POSITION ← 0
-    OP_LENGTH ← 0
-    OPERATOR ← ""
-    BEST_PRECEDENCE ← 99
-    IN_STRING ← 0
-    DEPTH ← 0
-    INDEX ← 1
-    WHILE INDEX <= LENGTH(EXPR)
-      CHARACTER ← MID(EXPR, INDEX, 1)
-      IF CHARACTER = CHR(34) THEN
-        IF IN_STRING = 0 THEN
-          IN_STRING ← 1
-        ELSE
+          OP_POSITION ← 0
+          OP_LENGTH ← 0
+          OPERATOR ← ""
+          BEST_PRECEDENCE ← 99
           IN_STRING ← 0
-        ENDIF
-      ELSE
-        IF IN_STRING = 0 THEN
-          IF CHARACTER = "(" THEN
-            DEPTH ← DEPTH + 1
-          ENDIF
-          IF CHARACTER = ")" THEN
-            DEPTH ← DEPTH - 1
-          ENDIF
-          IF DEPTH = 0 THEN
-            CANDIDATE ← ""
-            CANDIDATE_LENGTH ← 0
-            IF MID(EXPR, INDEX, 5) = " DIV " THEN
-              CANDIDATE ← "DIV"
-              CANDIDATE_LENGTH ← 5
-            ENDIF
-            IF MID(EXPR, INDEX, 5) = " MOD " THEN
-              CANDIDATE ← "MOD"
-              CANDIDATE_LENGTH ← 5
-            ENDIF
-            IF MID(EXPR, INDEX, 5) = " AND " THEN
-              CANDIDATE ← "AND"
-              CANDIDATE_LENGTH ← 5
-            ENDIF
-            IF CANDIDATE = "" THEN
-              IF MID(EXPR, INDEX, 4) = " OR " THEN
-                CANDIDATE ← "OR"
-                CANDIDATE_LENGTH ← 4
-              ENDIF
-              IF MID(EXPR, INDEX, 4) = " IN " THEN
-                CANDIDATE ← "IN"
-                CANDIDATE_LENGTH ← 4
-              ENDIF
-              IF MID(EXPR, INDEX, 4) = " <= " THEN
-                CANDIDATE ← "<="
-                CANDIDATE_LENGTH ← 4
-              ENDIF
-              IF MID(EXPR, INDEX, 4) = " >= " THEN
-                CANDIDATE ← ">="
-                CANDIDATE_LENGTH ← 4
-              ENDIF
-              IF MID(EXPR, INDEX, 4) = " <> " THEN
-                CANDIDATE ← "<>"
-                CANDIDATE_LENGTH ← 4
-              ENDIF
-            ENDIF
-            IF CANDIDATE = "" THEN
-              IF MID(EXPR, INDEX, 3) = " = " THEN
-                CANDIDATE ← "="
-              ENDIF
-              IF MID(EXPR, INDEX, 3) = " < " THEN
-                CANDIDATE ← "<"
-              ENDIF
-              IF MID(EXPR, INDEX, 3) = " > " THEN
-                CANDIDATE ← ">"
-              ENDIF
-              IF MID(EXPR, INDEX, 3) = " + " THEN
-                CANDIDATE ← "+"
-              ENDIF
-              IF MID(EXPR, INDEX, 3) = " - " THEN
-                CANDIDATE ← "-"
-              ENDIF
-              IF MID(EXPR, INDEX, 3) = " & " THEN
-                CANDIDATE ← "&"
-              ENDIF
-              IF MID(EXPR, INDEX, 3) = " * " THEN
-                CANDIDATE ← "*"
-              ENDIF
-              IF MID(EXPR, INDEX, 3) = " / " THEN
-                CANDIDATE ← "/"
-              ENDIF
-              IF CANDIDATE <> "" THEN
-                CANDIDATE_LENGTH ← 3
-              ENDIF
-            ENDIF
-            IF CANDIDATE = "" THEN
-              IF MID(EXPR, INDEX, 2) = "<=" OR MID(EXPR, INDEX, 2) = ">=" OR MID(EXPR, INDEX, 2) = "<>" THEN
-                CANDIDATE ← MID(EXPR, INDEX, 2)
-                CANDIDATE_LENGTH ← 2
+          DEPTH ← 0
+          INDEX ← 1
+          WHILE INDEX <= LENGTH(EXPR)
+            CHARACTER ← MID(EXPR, INDEX, 1)
+            IF CHARACTER = CHR(34) THEN
+              IF IN_STRING = 0 THEN
+                IN_STRING ← 1
               ELSE
-                IF CHARACTER = "=" OR CHARACTER = "<" OR CHARACTER = ">" OR CHARACTER = "+" OR CHARACTER = "-" OR CHARACTER = "&" OR CHARACTER = "*" OR CHARACTER = "/" THEN
-                  CANDIDATE ← CHARACTER
-                  CANDIDATE_LENGTH ← 1
-                  IF CHARACTER = "=" OR CHARACTER = ">" THEN
-                    IF INDEX > 1 THEN
-                      IF MID(EXPR, INDEX - 1, 1) = "<" OR MID(EXPR, INDEX - 1, 1) = ">" THEN
-                        CANDIDATE ← ""
-                      ENDIF
+                IN_STRING ← 0
+              ENDIF
+            ELSE
+              IF IN_STRING = 0 THEN
+                IF CHARACTER = "(" THEN
+                  DEPTH ← DEPTH + 1
+                ENDIF
+                IF CHARACTER = ")" THEN
+                  DEPTH ← DEPTH - 1
+                ENDIF
+                IF DEPTH = 0 THEN
+                  CANDIDATE ← ""
+                  CANDIDATE_LENGTH ← 0
+                  IF MID(EXPR, INDEX, 5) = " DIV " THEN
+                    CANDIDATE ← "DIV"
+                    CANDIDATE_LENGTH ← 5
+                  ENDIF
+                  IF MID(EXPR, INDEX, 5) = " MOD " THEN
+                    CANDIDATE ← "MOD"
+                    CANDIDATE_LENGTH ← 5
+                  ENDIF
+                  IF MID(EXPR, INDEX, 5) = " AND " THEN
+                    CANDIDATE ← "AND"
+                    CANDIDATE_LENGTH ← 5
+                  ENDIF
+                  IF CANDIDATE = "" THEN
+                    IF MID(EXPR, INDEX, 4) = " OR " THEN
+                      CANDIDATE ← "OR"
+                      CANDIDATE_LENGTH ← 4
+                    ENDIF
+                    IF MID(EXPR, INDEX, 4) = " IN " THEN
+                      CANDIDATE ← "IN"
+                      CANDIDATE_LENGTH ← 4
+                    ENDIF
+                    IF MID(EXPR, INDEX, 4) = " <= " THEN
+                      CANDIDATE ← "<="
+                      CANDIDATE_LENGTH ← 4
+                    ENDIF
+                    IF MID(EXPR, INDEX, 4) = " >= " THEN
+                      CANDIDATE ← ">="
+                      CANDIDATE_LENGTH ← 4
+                    ENDIF
+                    IF MID(EXPR, INDEX, 4) = " <> " THEN
+                      CANDIDATE ← "<>"
+                      CANDIDATE_LENGTH ← 4
                     ENDIF
                   ENDIF
-                  IF CHARACTER = "+" OR CHARACTER = "-" THEN
-                    IF INDEX = 1 THEN
-                      CANDIDATE ← ""
+                  IF CANDIDATE = "" THEN
+                    IF MID(EXPR, INDEX, 3) = " = " THEN
+                      CANDIDATE ← "="
+                    ENDIF
+                    IF MID(EXPR, INDEX, 3) = " < " THEN
+                      CANDIDATE ← "<"
+                    ENDIF
+                    IF MID(EXPR, INDEX, 3) = " > " THEN
+                      CANDIDATE ← ">"
+                    ENDIF
+                    IF MID(EXPR, INDEX, 3) = " + " THEN
+                      CANDIDATE ← "+"
+                    ENDIF
+                    IF MID(EXPR, INDEX, 3) = " - " THEN
+                      CANDIDATE ← "-"
+                    ENDIF
+                    IF MID(EXPR, INDEX, 3) = " & " THEN
+                      CANDIDATE ← "&"
+                    ENDIF
+                    IF MID(EXPR, INDEX, 3) = " * " THEN
+                      CANDIDATE ← "*"
+                    ENDIF
+                    IF MID(EXPR, INDEX, 3) = " / " THEN
+                      CANDIDATE ← "/"
+                    ENDIF
+                    IF CANDIDATE <> "" THEN
+                      CANDIDATE_LENGTH ← 3
+                    ENDIF
+                  ENDIF
+                  IF CANDIDATE = "" THEN
+                    IF MID(EXPR, INDEX, 2) = "<=" OR MID(EXPR, INDEX, 2) = ">=" OR MID(EXPR, INDEX, 2) = "<>" THEN
+                      CANDIDATE ← MID(EXPR, INDEX, 2)
+                      CANDIDATE_LENGTH ← 2
                     ELSE
-                      SCAN ← INDEX - 1
-                      WHILE SCAN > 0 AND MID(EXPR, SCAN, 1) = " " 
-                        SCAN ← SCAN - 1
-                      ENDWHILE
-                      IF SCAN = 0 THEN
-                        CANDIDATE ← ""
-                      ELSE
-                        IF MID(EXPR, SCAN, 1) = "(" OR MID(EXPR, SCAN, 1) = "+" OR MID(EXPR, SCAN, 1) = "-" OR MID(EXPR, SCAN, 1) = "*" OR MID(EXPR, SCAN, 1) = "/" OR MID(EXPR, SCAN, 1) = "=" OR MID(EXPR, SCAN, 1) = "," THEN
-                          CANDIDATE ← ""
+                      IF CHARACTER = "=" OR CHARACTER = "<" OR CHARACTER = ">" OR CHARACTER = "+" OR CHARACTER = "-" OR CHARACTER = "&" OR CHARACTER = "*" OR CHARACTER = "/" THEN
+                        CANDIDATE ← CHARACTER
+                        CANDIDATE_LENGTH ← 1
+                        IF CHARACTER = "=" OR CHARACTER = ">" THEN
+                          IF INDEX > 1 THEN
+                            IF MID(EXPR, INDEX - 1, 1) = "<" OR MID(EXPR, INDEX - 1, 1) = ">" THEN
+                              CANDIDATE ← ""
+                            ENDIF
+                          ENDIF
+                        ENDIF
+                        IF CHARACTER = "+" OR CHARACTER = "-" THEN
+                          IF INDEX = 1 THEN
+                            CANDIDATE ← ""
+                          ELSE
+                            SCAN ← INDEX - 1
+                            WHILE SCAN > 0 AND MID(EXPR, SCAN, 1) = " " 
+                              SCAN ← SCAN - 1
+                            ENDWHILE
+                            IF SCAN = 0 THEN
+                              CANDIDATE ← ""
+                            ELSE
+                              IF MID(EXPR, SCAN, 1) = "(" OR MID(EXPR, SCAN, 1) = "+" OR MID(EXPR, SCAN, 1) = "-" OR MID(EXPR, SCAN, 1) = "*" OR MID(EXPR, SCAN, 1) = "/" OR MID(EXPR, SCAN, 1) = "=" OR MID(EXPR, SCAN, 1) = "," THEN
+                                CANDIDATE ← ""
+                              ENDIF
+                            ENDIF
+                          ENDIF
+                        ENDIF
+                        IF CHARACTER = "/" AND LENGTH(EXPR) = 10 THEN
+                          IF MID(EXPR, 3, 1) = "/" AND MID(EXPR, 6, 1) = "/" THEN
+                            CANDIDATE ← ""
+                          ENDIF
                         ENDIF
                       ENDIF
                     ENDIF
                   ENDIF
-                  IF CHARACTER = "/" AND LENGTH(EXPR) = 10 THEN
-                    IF MID(EXPR, 3, 1) = "/" AND MID(EXPR, 6, 1) = "/" THEN
-                      CANDIDATE ← ""
+                  IF CANDIDATE <> "" THEN
+                    CANDIDATE_PRECEDENCE ← 3
+                    CASE OF CANDIDATE
+                      "OR" : CANDIDATE_PRECEDENCE ← 1
+                      "AND" : CANDIDATE_PRECEDENCE ← 2
+                      "&" : CANDIDATE_PRECEDENCE ← 4
+                      "+" : CANDIDATE_PRECEDENCE ← 5
+                      "-" : CANDIDATE_PRECEDENCE ← 5
+                      "*" : CANDIDATE_PRECEDENCE ← 6
+                      "/" : CANDIDATE_PRECEDENCE ← 6
+                      "DIV" : CANDIDATE_PRECEDENCE ← 6
+                      "MOD" : CANDIDATE_PRECEDENCE ← 6
+                    ENDCASE
+                    IF CANDIDATE_PRECEDENCE <= BEST_PRECEDENCE THEN
+                      BEST_PRECEDENCE ← CANDIDATE_PRECEDENCE
+                      OPERATOR ← CANDIDATE
+                      OP_POSITION ← INDEX
+                      OP_LENGTH ← CANDIDATE_LENGTH
                     ENDIF
                   ENDIF
                 ENDIF
               ENDIF
             ENDIF
-            IF CANDIDATE <> "" THEN
-              CANDIDATE_PRECEDENCE ← 3
-              IF CANDIDATE = "OR" THEN
-                CANDIDATE_PRECEDENCE ← 1
-              ENDIF
-              IF CANDIDATE = "AND" THEN
-                CANDIDATE_PRECEDENCE ← 2
-              ENDIF
-              IF CANDIDATE = "&" THEN
-                CANDIDATE_PRECEDENCE ← 4
-              ENDIF
-              IF CANDIDATE = "+" THEN
-                CANDIDATE_PRECEDENCE ← 5
-              ENDIF
-              IF CANDIDATE = "-" THEN
-                CANDIDATE_PRECEDENCE ← 5
-              ENDIF
-              IF CANDIDATE = "*" THEN
-                CANDIDATE_PRECEDENCE ← 6
-              ENDIF
-              IF CANDIDATE = "/" THEN
-                CANDIDATE_PRECEDENCE ← 6
-              ENDIF
-              IF CANDIDATE = "DIV" THEN
-                CANDIDATE_PRECEDENCE ← 6
-              ENDIF
-              IF CANDIDATE = "MOD" THEN
-                CANDIDATE_PRECEDENCE ← 6
-              ENDIF
-              IF CANDIDATE_PRECEDENCE <= BEST_PRECEDENCE THEN
-                BEST_PRECEDENCE ← CANDIDATE_PRECEDENCE
-                OPERATOR ← CANDIDATE
-                OP_POSITION ← INDEX
-                OP_LENGTH ← CANDIDATE_LENGTH
-              ENDIF
-            ENDIF
-          ENDIF
-        ENDIF
-      ENDIF
-      INDEX ← INDEX + 1
-    ENDWHILE
-    PART_COUNT ← 1
-    LEFT_PART ← EXPR
-    IF OP_POSITION > 0 THEN
-      PART_COUNT ← 0
-      NAME_LENGTH ← OP_POSITION - 1
-      LEFT_PART ← LEFT(EXPR, NAME_LENGTH)
-      START_POSITION ← OP_POSITION + OP_LENGTH
-      EXPR_LENGTH ← LENGTH(EXPR)
-      RIGHT_PART ← MID(EXPR, START_POSITION, EXPR_LENGTH)
-      OUTPUT "O:" & OPERATOR
-      WORK ← WORK & CHR(30)
-      WORK ← WORK & "B"
-      WORK ← WORK & CHR(30)
-      WORK ← WORK & "E:"
-      WORK ← WORK & RIGHT_PART
-      WORK ← WORK & CHR(30)
-      WORK ← WORK & "E:"
-      WORK ← WORK & LEFT_PART
-    ELSE
-      OPERATOR ← ""
-      OP_LENGTH ← 0
-      IF LEFT(EXPR, 4) = "NOT " THEN
-        OPERATOR ← "NOT"
-        OP_LENGTH ← 4
-      ENDIF
-      IF LEFT(EXPR, 1) = "-" THEN
-        OPERATOR ← "-"
-        OP_LENGTH ← 1
-      ENDIF
-      IF LEFT(EXPR, 1) = "+" THEN
-        OPERATOR ← "+"
-        OP_LENGTH ← 1
-      ENDIF
-      IF LEFT(EXPR, 1) = "^" THEN
-        OPERATOR ← "^"
-        OP_LENGTH ← 1
-      ENDIF
-      IF OPERATOR <> "" THEN
-        PART_COUNT ← 0
-        OUTPUT "U:" & OPERATOR
-        START_POSITION ← OP_LENGTH + 1
-        EXPR_LENGTH ← LENGTH(EXPR)
-        RIGHT_PART ← MID(EXPR, START_POSITION, EXPR_LENGTH)
-        WORK ← WORK & CHR(30)
-        WORK ← WORK & "V"
-        WORK ← WORK & CHR(30)
-        IF OPERATOR = "^" THEN
-          WORK ← WORK & "REFE:"
-        ELSE
-          WORK ← WORK & "E:"
-        ENDIF
-        WORK ← WORK & RIGHT_PART
-      ENDIF
-    ENDIF
-    PART_INDEX ← 1
-    WHILE PART_INDEX <= PART_COUNT
-      ATOM ← LEFT_PART
-      IF PART_INDEX = 2 THEN
-        ATOM ← RIGHT_PART
-      ENDIF
-      IF ATOM = "TRUE" THEN
-        OUTPUT "K:1"
-        OUTPUT "BOOL"
-      ELSE
-        IF ATOM = "FALSE" THEN
-          OUTPUT "K:0"
-          OUTPUT "BOOL"
-        ELSE
-          IF ATOM = "NULL" THEN
-            OUTPUT "NULL"
-          ELSE
-      IF LEFT(ATOM, 1) = CHR(34) OR LEFT(ATOM, 1) = CHR(39) THEN
-        NAME_LENGTH ← LENGTH(ATOM)
-        NAME_LENGTH ← NAME_LENGTH - 2
-        RECORD_LINE ← MID(ATOM, 2, NAME_LENGTH)
-        OUTPUT "I:" & RECORD_LINE
-        OUTPUT "STR"
-      ELSE
-        IF IS_NUM(ATOM) THEN
-          OUTPUT "I:STR_TO_NUM"
-          OUTPUT "ARGS"
-          OUTPUT "I:" & ATOM
-          OUTPUT "STR"
-          OUTPUT "PUSH"
-          OUTPUT "CALLBUILTIN"
-        ELSE
-          IF RIGHT(ATOM, 1) = "^" THEN
-            NAME_LENGTH ← LENGTH(ATOM)
-            NAME_LENGTH ← NAME_LENGTH - 1
-            TARGET_NAME ← LEFT(ATOM, NAME_LENGTH)
-            OUTPUT "I:" & TARGET_NAME
-            OUTPUT "GET"
-            OUTPUT "DEREF"
-          ELSE
-          IF LENGTH(ATOM) = 10 AND MID(ATOM, 3, 1) = "/" AND MID(ATOM, 6, 1) = "/" THEN
-            DATE_CALL ← "SETDATE("
-            SCAN ← 1
-            WHILE SCAN <= LENGTH(ATOM)
-              CHARACTER ← MID(ATOM, SCAN, 1)
-              IF CHARACTER = "/" THEN
-                DATE_CALL ← DATE_CALL & ","
-              ELSE
-                DATE_CALL ← DATE_CALL & CHARACTER
-              ENDIF
-              SCAN ← SCAN + 1
-            ENDWHILE
-            DATE_CALL ← DATE_CALL & ")"
+            INDEX ← INDEX + 1
+          ENDWHILE
+          PART_COUNT ← 1
+          LEFT_PART ← EXPR
+          IF OP_POSITION > 0 THEN
+            PART_COUNT ← 0
+            NAME_LENGTH ← OP_POSITION - 1
+            LEFT_PART ← LEFT(EXPR, NAME_LENGTH)
+            START_POSITION ← OP_POSITION + OP_LENGTH
+            EXPR_LENGTH ← LENGTH(EXPR)
+            RIGHT_PART ← MID(EXPR, START_POSITION, EXPR_LENGTH)
+            OUTPUT "O:" & OPERATOR
+            WORK ← WORK & CHR(30)
+            WORK ← WORK & "B"
             WORK ← WORK & CHR(30)
             WORK ← WORK & "E:"
-            WORK ← WORK & DATE_CALL
+            WORK ← WORK & RIGHT_PART
+            WORK ← WORK & CHR(30)
+            WORK ← WORK & "E:"
+            WORK ← WORK & LEFT_PART
           ELSE
-          OPEN_INDEX ← 0
-          INDEX_POSITION ← 0
-          SCAN ← 1
-          WHILE SCAN <= LENGTH(ATOM)
-            IF MID(ATOM, SCAN, 1) = "(" THEN
-              IF OPEN_INDEX = 0 THEN
-                OPEN_INDEX ← SCAN
-              ENDIF
+            OPERATOR ← ""
+            OP_LENGTH ← 0
+            IF LEFT(EXPR, 4) = "NOT " THEN
+              OPERATOR ← "NOT"
+              OP_LENGTH ← 4
             ENDIF
-            IF MID(ATOM, SCAN, 1) = "[" THEN
-              IF OPEN_INDEX = 0 THEN
-                OPEN_INDEX ← SCAN
-                INDEX_POSITION ← 1
-              ENDIF
+            IF LEFT(EXPR, 1) = "-" THEN
+              OPERATOR ← "-"
+              OP_LENGTH ← 1
             ENDIF
-            SCAN ← SCAN + 1
-          ENDWHILE
-          IF OPEN_INDEX = 0 THEN
-            FIELD_POSITION ← 0
-            SCAN ← 1
-            WHILE SCAN <= LENGTH(ATOM)
-              IF MID(ATOM, SCAN, 1) = "." THEN
-                FIELD_POSITION ← SCAN
-              ENDIF
-              SCAN ← SCAN + 1
-            ENDWHILE
-            IF FIELD_POSITION = 0 THEN
-              OUTPUT "I:" & ATOM
-              OUTPUT "GET"
-            ELSE
-              NAME_LENGTH ← FIELD_POSITION - 1
-              TARGET_NAME ← LEFT(ATOM, NAME_LENGTH)
-              START_POSITION ← FIELD_POSITION + 1
-              LINE_LENGTH ← LENGTH(ATOM)
-              FIELD_NAME ← MID(ATOM, START_POSITION, LINE_LENGTH)
-              OUTPUT "I:" & TARGET_NAME
-              OUTPUT "GET"
-              OUTPUT "I:" & FIELD_NAME
-              OUTPUT "FIELD"
+            IF LEFT(EXPR, 1) = "+" THEN
+              OPERATOR ← "+"
+              OP_LENGTH ← 1
             ENDIF
-          ELSE
-            NAME_LENGTH ← OPEN_INDEX - 1
-            FUNCTION_NAME ← LEFT(ATOM, NAME_LENGTH)
-            CALL_INDEX ← -1
-            METHOD_MODE ← 0
-            IF INDEX_POSITION = 0 THEN
-              IF LEFT(FUNCTION_NAME, 4) = "NEW " THEN
-                METHOD_MODE ← 1
-                LINE_LENGTH ← LENGTH(FUNCTION_NAME)
-                METHOD_NAME ← MID(FUNCTION_NAME, 5, LINE_LENGTH)
+            IF LEFT(EXPR, 1) = "^" THEN
+              OPERATOR ← "^"
+              OP_LENGTH ← 1
+            ENDIF
+            IF OPERATOR <> "" THEN
+              PART_COUNT ← 0
+              OUTPUT "U:" & OPERATOR
+              START_POSITION ← OP_LENGTH + 1
+              EXPR_LENGTH ← LENGTH(EXPR)
+              RIGHT_PART ← MID(EXPR, START_POSITION, EXPR_LENGTH)
+              WORK ← WORK & CHR(30)
+              WORK ← WORK & "V"
+              WORK ← WORK & CHR(30)
+              IF OPERATOR = "^" THEN
+                WORK ← WORK & "REFE:"
               ELSE
-                FIELD_POSITION ← 0
+                WORK ← WORK & "E:"
+              ENDIF
+              WORK ← WORK & RIGHT_PART
+            ENDIF
+          ENDIF
+          PART_INDEX ← 1
+          WHILE PART_INDEX <= PART_COUNT
+            ATOM ← LEFT_PART
+            IF PART_INDEX = 2 THEN
+              ATOM ← RIGHT_PART
+            ENDIF
+            IF ATOM = "TRUE" THEN
+              OUTPUT "K:1"
+              OUTPUT "BOOL"
+            ELSE
+              IF ATOM = "FALSE" THEN
+                OUTPUT "K:0"
+                OUTPUT "BOOL"
+              ELSE
+                IF ATOM = "NULL" THEN
+                  OUTPUT "NULL"
+                ELSE
+            IF LEFT(ATOM, 1) = CHR(34) OR LEFT(ATOM, 1) = CHR(39) THEN
+              NAME_LENGTH ← LENGTH(ATOM)
+              NAME_LENGTH ← NAME_LENGTH - 2
+              RECORD_LINE ← MID(ATOM, 2, NAME_LENGTH)
+              OUTPUT "I:" & RECORD_LINE
+              OUTPUT "STR"
+            ELSE
+              IF IS_NUM(ATOM) THEN
+                OUTPUT "I:STR_TO_NUM"
+                OUTPUT "ARGS"
+                OUTPUT "I:" & ATOM
+                OUTPUT "STR"
+                OUTPUT "PUSH"
+                OUTPUT "CALLBUILTIN"
+              ELSE
+                IF RIGHT(ATOM, 1) = "^" THEN
+                  NAME_LENGTH ← LENGTH(ATOM)
+                  NAME_LENGTH ← NAME_LENGTH - 1
+                  TARGET_NAME ← LEFT(ATOM, NAME_LENGTH)
+                  OUTPUT "I:" & TARGET_NAME
+                  OUTPUT "GET"
+                  OUTPUT "DEREF"
+                ELSE
+                IF LENGTH(ATOM) = 10 AND MID(ATOM, 3, 1) = "/" AND MID(ATOM, 6, 1) = "/" THEN
+                  DATE_CALL ← "SETDATE("
+                  SCAN ← 1
+                  WHILE SCAN <= LENGTH(ATOM)
+                    CHARACTER ← MID(ATOM, SCAN, 1)
+                    IF CHARACTER = "/" THEN
+                      DATE_CALL ← DATE_CALL & ","
+                    ELSE
+                      DATE_CALL ← DATE_CALL & CHARACTER
+                    ENDIF
+                    SCAN ← SCAN + 1
+                  ENDWHILE
+                  DATE_CALL ← DATE_CALL & ")"
+                  WORK ← WORK & CHR(30)
+                  WORK ← WORK & "E:"
+                  WORK ← WORK & DATE_CALL
+                ELSE
+                OPEN_INDEX ← 0
+                INDEX_POSITION ← 0
                 SCAN ← 1
-                WHILE SCAN <= LENGTH(FUNCTION_NAME)
-                  IF MID(FUNCTION_NAME, SCAN, 1) = "." THEN
-                    FIELD_POSITION ← SCAN
+                WHILE SCAN <= LENGTH(ATOM)
+                  IF MID(ATOM, SCAN, 1) = "(" THEN
+                    IF OPEN_INDEX = 0 THEN
+                      OPEN_INDEX ← SCAN
+                    ENDIF
+                  ENDIF
+                  IF MID(ATOM, SCAN, 1) = "[" THEN
+                    IF OPEN_INDEX = 0 THEN
+                      OPEN_INDEX ← SCAN
+                      INDEX_POSITION ← 1
+                    ENDIF
                   ENDIF
                   SCAN ← SCAN + 1
                 ENDWHILE
-                IF FIELD_POSITION > 0 THEN
-                  METHOD_MODE ← 2
-                  NAME_LENGTH ← FIELD_POSITION - 1
-                  TARGET_NAME ← LEFT(FUNCTION_NAME, NAME_LENGTH)
-                  START_POSITION ← FIELD_POSITION + 1
-                  LINE_LENGTH ← LENGTH(FUNCTION_NAME)
-                  METHOD_NAME ← MID(FUNCTION_NAME, START_POSITION, LINE_LENGTH)
-                ENDIF
-              ENDIF
-            ENDIF
-            IF INDEX_POSITION = 0 AND METHOD_MODE = 0 THEN
-              MAP_KEY ← "|" & FUNCTION_NAME
-              MAP_KEY ← MAP_KEY & "="
-              SCAN ← 1
-              WHILE SCAN <= LENGTH(ROUTINE_MAP)
-                IF MID(ROUTINE_MAP, SCAN, LENGTH(MAP_KEY)) = MAP_KEY THEN
-                  START_POSITION ← SCAN + LENGTH(MAP_KEY)
-                  CALL_INDEX ← ASC(MID(ROUTINE_MAP, START_POSITION, 1))
-                  CALL_INDEX ← CALL_INDEX - 1
-                ENDIF
-                SCAN ← SCAN + 1
-              ENDWHILE
-            ENDIF
-            CALL_FLAGS ← ""
-            IF CALL_INDEX >= 0 THEN
-              SCAN ← 1
-              WHILE SCAN <= LENGTH(ROUTINE_REF_MAP)
-                IF MID(ROUTINE_REF_MAP, SCAN, LENGTH(MAP_KEY)) = MAP_KEY THEN
-                  START_POSITION ← SCAN + LENGTH(MAP_KEY)
-                  CHARACTER ← MID(ROUTINE_REF_MAP, START_POSITION, 1)
-                  WHILE CHARACTER <> CHR(30)
-                    CALL_FLAGS ← CALL_FLAGS & CHARACTER
-                    START_POSITION ← START_POSITION + 1
-                    CHARACTER ← MID(ROUTINE_REF_MAP, START_POSITION, 1)
+                IF OPEN_INDEX = 0 THEN
+                  FIELD_POSITION ← 0
+                  SCAN ← 1
+                  WHILE SCAN <= LENGTH(ATOM)
+                    IF MID(ATOM, SCAN, 1) = "." THEN
+                      FIELD_POSITION ← SCAN
+                    ENDIF
+                    SCAN ← SCAN + 1
                   ENDWHILE
-                ENDIF
-                SCAN ← SCAN + 1
-              ENDWHILE
-            ENDIF
-            IF METHOD_MODE = 1 THEN
-              OUTPUT "I:" & METHOD_NAME
-            ELSE
-              IF METHOD_MODE = 2 THEN
-                OUTPUT "I:" & TARGET_NAME
-                OUTPUT "GET"
-                OUTPUT "I:" & METHOD_NAME
-              ELSE
-                IF CALL_INDEX = -1 THEN
-                  OUTPUT "I:" & FUNCTION_NAME
-                ENDIF
-              ENDIF
-            ENDIF
-            IF INDEX_POSITION = 1 THEN
-              OUTPUT "GET"
-            ENDIF
-            OUTPUT "ARGS"
-            START_POSITION ← OPEN_INDEX + 1
-            ARG_LENGTH ← LENGTH(ATOM)
-            ARG_LENGTH ← ARG_LENGTH - START_POSITION
-            INDEX_FIELD ← 0
-            IF INDEX_POSITION = 1 THEN
-              TYPE_CLOSE ← 0
-              SCAN ← OPEN_INDEX
-              WHILE SCAN <= LENGTH(ATOM)
-                IF MID(ATOM, SCAN, 1) = "]" THEN
-                  TYPE_CLOSE ← SCAN
-                ENDIF
-                SCAN ← SCAN + 1
-              ENDWHILE
-              ARG_LENGTH ← TYPE_CLOSE - START_POSITION
-              IF TYPE_CLOSE < LENGTH(ATOM) THEN
-                INDEX_FIELD ← 1
-                START_POSITION ← TYPE_CLOSE + 2
-                LINE_LENGTH ← LENGTH(ATOM)
-                FIELD_NAME ← MID(ATOM, START_POSITION, LINE_LENGTH)
-                START_POSITION ← OPEN_INDEX + 1
-              ENDIF
-            ENDIF
-            ARGUMENTS ← MID(ATOM, START_POSITION, ARG_LENGTH)
-            WORK ← WORK & CHR(30)
-            IF INDEX_POSITION = 1 THEN
-              IF INDEX_FIELD = 1 THEN
-                WORK ← WORK & "JF:"
-                WORK ← WORK & FIELD_NAME
-              ELSE
-                WORK ← WORK & "J"
-              ENDIF
-            ELSE
-              IF METHOD_MODE = 1 THEN
-                WORK ← WORK & "N"
-              ELSE
-                IF METHOD_MODE = 2 THEN
-                  WORK ← WORK & "M"
-                ELSE
-                  IF CALL_INDEX = -1 THEN
-                    WORK ← WORK & "C"
+                  IF FIELD_POSITION = 0 THEN
+                    OUTPUT "I:" & ATOM
+                    OUTPUT "GET"
                   ELSE
-                    WORK ← WORK & "R:"
-                    WORK ← WORK & NUM_TO_STR(CALL_INDEX)
+                    NAME_LENGTH ← FIELD_POSITION - 1
+                    TARGET_NAME ← LEFT(ATOM, NAME_LENGTH)
+                    START_POSITION ← FIELD_POSITION + 1
+                    LINE_LENGTH ← LENGTH(ATOM)
+                    FIELD_NAME ← MID(ATOM, START_POSITION, LINE_LENGTH)
+                    OUTPUT "I:" & TARGET_NAME
+                    OUTPUT "GET"
+                    OUTPUT "I:" & FIELD_NAME
+                    OUTPUT "FIELD"
                   ENDIF
-                ENDIF
-              ENDIF
-            ENDIF
-            ARG_POSITION ← LENGTH(ARGUMENTS)
-            ARG_NUMBER ← LENGTH(CALL_FLAGS)
-            ARGUMENT ← ""
-            ARG_DEPTH ← 0
-            ARG_IN_STRING ← 0
-            WHILE ARG_POSITION >= 1
-              CHARACTER ← MID(ARGUMENTS, ARG_POSITION, 1)
-              IF CHARACTER = CHR(34) THEN
-                IF ARG_IN_STRING = 0 THEN
-                  ARG_IN_STRING ← 1
                 ELSE
+                  NAME_LENGTH ← OPEN_INDEX - 1
+                  FUNCTION_NAME ← LEFT(ATOM, NAME_LENGTH)
+                  CALL_INDEX ← -1
+                  METHOD_MODE ← 0
+                  IF INDEX_POSITION = 0 THEN
+                    IF LEFT(FUNCTION_NAME, 4) = "NEW " THEN
+                      METHOD_MODE ← 1
+                      LINE_LENGTH ← LENGTH(FUNCTION_NAME)
+                      METHOD_NAME ← MID(FUNCTION_NAME, 5, LINE_LENGTH)
+                    ELSE
+                      FIELD_POSITION ← 0
+                      SCAN ← 1
+                      WHILE SCAN <= LENGTH(FUNCTION_NAME)
+                        IF MID(FUNCTION_NAME, SCAN, 1) = "." THEN
+                          FIELD_POSITION ← SCAN
+                        ENDIF
+                        SCAN ← SCAN + 1
+                      ENDWHILE
+                      IF FIELD_POSITION > 0 THEN
+                        METHOD_MODE ← 2
+                        NAME_LENGTH ← FIELD_POSITION - 1
+                        TARGET_NAME ← LEFT(FUNCTION_NAME, NAME_LENGTH)
+                        START_POSITION ← FIELD_POSITION + 1
+                        LINE_LENGTH ← LENGTH(FUNCTION_NAME)
+                        METHOD_NAME ← MID(FUNCTION_NAME, START_POSITION, LINE_LENGTH)
+                      ENDIF
+                    ENDIF
+                  ENDIF
+                  IF INDEX_POSITION = 0 AND METHOD_MODE = 0 THEN
+                    MAP_KEY ← "|" & FUNCTION_NAME
+                    MAP_KEY ← MAP_KEY & "="
+                    SCAN ← 1
+                    WHILE SCAN <= LENGTH(ROUTINE_MAP)
+                      IF MID(ROUTINE_MAP, SCAN, LENGTH(MAP_KEY)) = MAP_KEY THEN
+                        START_POSITION ← SCAN + LENGTH(MAP_KEY)
+                        CALL_INDEX ← ASC(MID(ROUTINE_MAP, START_POSITION, 1))
+                        CALL_INDEX ← CALL_INDEX - 1
+                      ENDIF
+                      SCAN ← SCAN + 1
+                    ENDWHILE
+                  ENDIF
+                  CALL_FLAGS ← ""
+                  IF CALL_INDEX >= 0 THEN
+                    SCAN ← 1
+                    WHILE SCAN <= LENGTH(ROUTINE_REF_MAP)
+                      IF MID(ROUTINE_REF_MAP, SCAN, LENGTH(MAP_KEY)) = MAP_KEY THEN
+                        START_POSITION ← SCAN + LENGTH(MAP_KEY)
+                        CHARACTER ← MID(ROUTINE_REF_MAP, START_POSITION, 1)
+                        WHILE CHARACTER <> CHR(30)
+                          CALL_FLAGS ← CALL_FLAGS & CHARACTER
+                          START_POSITION ← START_POSITION + 1
+                          CHARACTER ← MID(ROUTINE_REF_MAP, START_POSITION, 1)
+                        ENDWHILE
+                      ENDIF
+                      SCAN ← SCAN + 1
+                    ENDWHILE
+                  ENDIF
+                  IF METHOD_MODE = 1 THEN
+                    OUTPUT "I:" & METHOD_NAME
+                  ELSE
+                    IF METHOD_MODE = 2 THEN
+                      OUTPUT "I:" & TARGET_NAME
+                      OUTPUT "GET"
+                      OUTPUT "I:" & METHOD_NAME
+                    ELSE
+                      IF CALL_INDEX = -1 THEN
+                        OUTPUT "I:" & FUNCTION_NAME
+                      ENDIF
+                    ENDIF
+                  ENDIF
+                  IF INDEX_POSITION = 1 THEN
+                    OUTPUT "GET"
+                  ENDIF
+                  OUTPUT "ARGS"
+                  START_POSITION ← OPEN_INDEX + 1
+                  ARG_LENGTH ← LENGTH(ATOM)
+                  ARG_LENGTH ← ARG_LENGTH - START_POSITION
+                  INDEX_FIELD ← 0
+                  IF INDEX_POSITION = 1 THEN
+                    TYPE_CLOSE ← 0
+                    SCAN ← OPEN_INDEX
+                    WHILE SCAN <= LENGTH(ATOM)
+                      IF MID(ATOM, SCAN, 1) = "]" THEN
+                        TYPE_CLOSE ← SCAN
+                      ENDIF
+                      SCAN ← SCAN + 1
+                    ENDWHILE
+                    ARG_LENGTH ← TYPE_CLOSE - START_POSITION
+                    IF TYPE_CLOSE < LENGTH(ATOM) THEN
+                      INDEX_FIELD ← 1
+                      START_POSITION ← TYPE_CLOSE + 2
+                      LINE_LENGTH ← LENGTH(ATOM)
+                      FIELD_NAME ← MID(ATOM, START_POSITION, LINE_LENGTH)
+                      START_POSITION ← OPEN_INDEX + 1
+                    ENDIF
+                  ENDIF
+                  ARGUMENTS ← MID(ATOM, START_POSITION, ARG_LENGTH)
+                  WORK ← WORK & CHR(30)
+                  IF INDEX_POSITION = 1 THEN
+                    IF INDEX_FIELD = 1 THEN
+                      WORK ← WORK & "JF:"
+                      WORK ← WORK & FIELD_NAME
+                    ELSE
+                      WORK ← WORK & "J"
+                    ENDIF
+                  ELSE
+                    IF METHOD_MODE = 1 THEN
+                      WORK ← WORK & "N"
+                    ELSE
+                      IF METHOD_MODE = 2 THEN
+                        WORK ← WORK & "M"
+                      ELSE
+                        IF CALL_INDEX = -1 THEN
+                          WORK ← WORK & "C"
+                        ELSE
+                          WORK ← WORK & "R:"
+                          WORK ← WORK & NUM_TO_STR(CALL_INDEX)
+                        ENDIF
+                      ENDIF
+                    ENDIF
+                  ENDIF
+                  ARG_POSITION ← LENGTH(ARGUMENTS)
+                  ARG_NUMBER ← LENGTH(CALL_FLAGS)
+                  ARGUMENT ← ""
+                  ARG_DEPTH ← 0
                   ARG_IN_STRING ← 0
-                ENDIF
-              ENDIF
-              IF ARG_IN_STRING = 0 THEN
-                IF CHARACTER = ")" THEN
-                  ARG_DEPTH ← ARG_DEPTH + 1
-                ENDIF
-                IF CHARACTER = "]" THEN
-                  ARG_DEPTH ← ARG_DEPTH + 1
-                ENDIF
-                IF CHARACTER = "(" THEN
-                  ARG_DEPTH ← ARG_DEPTH - 1
-                ENDIF
-                IF CHARACTER = "[" THEN
-                  ARG_DEPTH ← ARG_DEPTH - 1
-                ENDIF
-              ENDIF
-              IF CHARACTER = "," THEN
-                IF ARG_DEPTH = 0 AND ARG_IN_STRING = 0 THEN
+                  WHILE ARG_POSITION >= 1
+                    CHARACTER ← MID(ARGUMENTS, ARG_POSITION, 1)
+                    IF CHARACTER = CHR(34) THEN
+                      IF ARG_IN_STRING = 0 THEN
+                        ARG_IN_STRING ← 1
+                      ELSE
+                        ARG_IN_STRING ← 0
+                      ENDIF
+                    ENDIF
+                    IF ARG_IN_STRING = 0 THEN
+                      IF CHARACTER = ")" THEN
+                        ARG_DEPTH ← ARG_DEPTH + 1
+                      ENDIF
+                      IF CHARACTER = "]" THEN
+                        ARG_DEPTH ← ARG_DEPTH + 1
+                      ENDIF
+                      IF CHARACTER = "(" THEN
+                        ARG_DEPTH ← ARG_DEPTH - 1
+                      ENDIF
+                      IF CHARACTER = "[" THEN
+                        ARG_DEPTH ← ARG_DEPTH - 1
+                      ENDIF
+                    ENDIF
+                    IF CHARACTER = "," THEN
+                      IF ARG_DEPTH = 0 AND ARG_IN_STRING = 0 THEN
+                        WHILE LEFT(ARGUMENT, 1) = " "
+                          ARGUMENT ← MID(ARGUMENT, 2, LENGTH(ARGUMENT))
+                        ENDWHILE
+                        WHILE RIGHT(ARGUMENT, 1) = " "
+                          ARG_LENGTH ← LENGTH(ARGUMENT)
+                          ARG_LENGTH ← ARG_LENGTH - 1
+                          ARGUMENT ← LEFT(ARGUMENT, ARG_LENGTH)
+                        ENDWHILE
+                        WORK ← WORK & CHR(30)
+                        WORK ← WORK & "P"
+                        WORK ← WORK & CHR(30)
+                        IS_BYREF ← 0
+                        IF MID(CALL_FLAGS, ARG_NUMBER, 1) = "1" THEN
+                          IS_BYREF ← 1
+                        ENDIF
+                        IF METHOD_MODE > 0 THEN
+                          IF IS_NUM(ARGUMENT) = FALSE AND LEFT(ARGUMENT, 1) <> CHR(34) AND LEFT(ARGUMENT, 1) <> CHR(39) THEN
+                            IF ARGUMENT <> "TRUE" AND ARGUMENT <> "FALSE" AND ARGUMENT <> "NULL" THEN
+                              IS_BYREF ← 1
+                            ENDIF
+                          ENDIF
+                        ENDIF
+                        IF IS_BYREF = 1 THEN
+                          WORK ← WORK & "REFE:"
+                        ELSE
+                          WORK ← WORK & "E:"
+                        ENDIF
+                        WORK ← WORK & ARGUMENT
+                        ARGUMENT ← ""
+                        ARG_NUMBER ← ARG_NUMBER - 1
+                      ELSE
+                        ARGUMENT ← CHARACTER & ARGUMENT
+                      ENDIF
+                    ELSE
+                      ARGUMENT ← CHARACTER & ARGUMENT
+                    ENDIF
+                    ARG_POSITION ← ARG_POSITION - 1
+                  ENDWHILE
                   WHILE LEFT(ARGUMENT, 1) = " "
                     ARGUMENT ← MID(ARGUMENT, 2, LENGTH(ARGUMENT))
                   ENDWHILE
@@ -1907,109 +1947,51 @@ WHILE POSITION <= LENGTH(SOURCE)
                     ARG_LENGTH ← ARG_LENGTH - 1
                     ARGUMENT ← LEFT(ARGUMENT, ARG_LENGTH)
                   ENDWHILE
-                  WORK ← WORK & CHR(30)
-                  WORK ← WORK & "P"
-                  WORK ← WORK & CHR(30)
-                  IS_BYREF ← 0
-                  IF MID(CALL_FLAGS, ARG_NUMBER, 1) = "1" THEN
-                    IS_BYREF ← 1
-                  ENDIF
-                  IF METHOD_MODE > 0 THEN
-                    IF IS_NUM(ARGUMENT) = FALSE AND LEFT(ARGUMENT, 1) <> CHR(34) AND LEFT(ARGUMENT, 1) <> CHR(39) THEN
-                      IF ARGUMENT <> "TRUE" AND ARGUMENT <> "FALSE" AND ARGUMENT <> "NULL" THEN
-                        IS_BYREF ← 1
+                  IF ARGUMENT <> "" THEN
+                    WORK ← WORK & CHR(30)
+                    WORK ← WORK & "P"
+                    WORK ← WORK & CHR(30)
+                    IS_BYREF ← 0
+                    IF MID(CALL_FLAGS, ARG_NUMBER, 1) = "1" THEN
+                      IS_BYREF ← 1
+                    ENDIF
+                    IF METHOD_MODE > 0 THEN
+                      IF IS_NUM(ARGUMENT) = FALSE AND LEFT(ARGUMENT, 1) <> CHR(34) AND LEFT(ARGUMENT, 1) <> CHR(39) THEN
+                        IF ARGUMENT <> "TRUE" AND ARGUMENT <> "FALSE" AND ARGUMENT <> "NULL" THEN
+                          IS_BYREF ← 1
+                        ENDIF
                       ENDIF
                     ENDIF
-                  ENDIF
-                  IF IS_BYREF = 1 THEN
-                    WORK ← WORK & "REFE:"
-                  ELSE
-                    WORK ← WORK & "E:"
-                  ENDIF
-                  WORK ← WORK & ARGUMENT
-                  ARGUMENT ← ""
-                  ARG_NUMBER ← ARG_NUMBER - 1
-                ELSE
-                  ARGUMENT ← CHARACTER & ARGUMENT
-                ENDIF
-              ELSE
-                ARGUMENT ← CHARACTER & ARGUMENT
-              ENDIF
-              ARG_POSITION ← ARG_POSITION - 1
-            ENDWHILE
-            WHILE LEFT(ARGUMENT, 1) = " "
-              ARGUMENT ← MID(ARGUMENT, 2, LENGTH(ARGUMENT))
-            ENDWHILE
-            WHILE RIGHT(ARGUMENT, 1) = " "
-              ARG_LENGTH ← LENGTH(ARGUMENT)
-              ARG_LENGTH ← ARG_LENGTH - 1
-              ARGUMENT ← LEFT(ARGUMENT, ARG_LENGTH)
-            ENDWHILE
-            IF ARGUMENT <> "" THEN
-              WORK ← WORK & CHR(30)
-              WORK ← WORK & "P"
-              WORK ← WORK & CHR(30)
-              IS_BYREF ← 0
-              IF MID(CALL_FLAGS, ARG_NUMBER, 1) = "1" THEN
-                IS_BYREF ← 1
-              ENDIF
-              IF METHOD_MODE > 0 THEN
-                IF IS_NUM(ARGUMENT) = FALSE AND LEFT(ARGUMENT, 1) <> CHR(34) AND LEFT(ARGUMENT, 1) <> CHR(39) THEN
-                  IF ARGUMENT <> "TRUE" AND ARGUMENT <> "FALSE" AND ARGUMENT <> "NULL" THEN
-                    IS_BYREF ← 1
+                    IF IS_BYREF = 1 THEN
+                      WORK ← WORK & "REFE:"
+                    ELSE
+                      WORK ← WORK & "E:"
+                    ENDIF
+                    WORK ← WORK & ARGUMENT
                   ENDIF
                 ENDIF
-              ENDIF
-              IF IS_BYREF = 1 THEN
-                WORK ← WORK & "REFE:"
-              ELSE
-                WORK ← WORK & "E:"
-              ENDIF
-              WORK ← WORK & ARGUMENT
-            ENDIF
-          ENDIF
-          ENDIF
-          ENDIF
-        ENDIF
-      ENDIF
-          ENDIF
-        ENDIF
-      ENDIF
-      PART_INDEX ← PART_INDEX + 1
-    ENDWHILE
+                ENDIF
+                ENDIF
               ENDIF
             ENDIF
-          ENDIF
-        ENDIF
-      ENDIF
+                ENDIF
+              ENDIF
+            ENDIF
+            PART_INDEX ← PART_INDEX + 1
+          ENDWHILE
+      ENDCASE
       ENDIF
     ENDWHILE
-    IF MODE = "ASSIGN" THEN
-      OUTPUT "SET"
-    ENDIF
-    IF MODE = "ASSIGN_FIELD" THEN
-      OUTPUT "SETFIELD"
-    ENDIF
-    IF MODE = "ASSIGN_DEREF" THEN
-      OUTPUT "SETDEREF"
-    ENDIF
-    IF MODE = "CONSTANT" THEN
-      OUTPUT "DECLARE"
-    ENDIF
-    IF MODE = "IF" THEN
-      OUTPUT "IF"
-    ENDIF
-    IF MODE = "WHILE" THEN
-      OUTPUT "WHILE_TEST"
-    ENDIF
-    IF MODE = "UNTIL" THEN
-      OUTPUT "UNTIL_TEST"
-    ENDIF
-    IF MODE = "RETURN" THEN
-      OUTPUT "RETURN"
-    ENDIF
-    IF MODE = "CALLSTMT" THEN
-      OUTPUT "DROP"
-    ENDIF
+    CASE OF MODE
+      "ASSIGN" : OUTPUT "SET"
+      "ASSIGN_FIELD" : OUTPUT "SETFIELD"
+      "ASSIGN_DEREF" : OUTPUT "SETDEREF"
+      "CONSTANT" : OUTPUT "DECLARE"
+      "IF" : OUTPUT "IF"
+      "WHILE" : OUTPUT "WHILE_TEST"
+      "UNTIL" : OUTPUT "UNTIL_TEST"
+      "RETURN" : OUTPUT "RETURN"
+      "CALLSTMT" : OUTPUT "DROP"
+    ENDCASE
   ENDIF
 ENDWHILE
