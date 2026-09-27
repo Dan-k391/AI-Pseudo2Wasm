@@ -1,0 +1,13 @@
+// A program compiled by the self-hosted core.
+DECLARE COUNT : INTEGER
+DECLARE MESSAGE : STRING
+COUNT ← 0
+MESSAGE ← "Self-hosted compiler says: "
+WHILE COUNT < 5
+  IF COUNT = 3 THEN
+    OUTPUT MESSAGE & "three"
+  ELSE
+    OUTPUT COUNT
+  ENDIF
+  COUNT ← COUNT + 1
+ENDWHILE

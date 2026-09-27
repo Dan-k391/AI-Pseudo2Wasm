@@ -1,0 +1,31 @@
+{
+  "strings": [
+    "COUNT",
+    "INTEGER",
+    "INTEGER",
+    "MESSAGE",
+    "STRING",
+    "STRING",
+    "COUNT",
+    "STR_TO_NUM",
+    "0",
+    "MESSAGE",
+    "Self-hosted compiler says: ",
+    "COUNT",
+    "STR_TO_NUM",
+    "5",
+    "COUNT",
+    "STR_TO_NUM",
+    "3",
+    "MESSAGE",
+    "three",
+    "COUNT",
+    "COUNT",
+    "COUNT",
+    "STR_TO_NUM",
+    "1"
+  ],
+  "types": {},
+  "classes": {},
+  "routines": []
+}

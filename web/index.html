@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0d1219">
+  <meta name="description" content="Write Cambridge 9618 pseudocode, compile it to WebAssembly, and run it in your browser.">
+  <title>Pseudo2Wasm — CAIE Pseudocode IDE</title>
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./styles.css">
+  <link rel="stylesheet" href="./terminal.css">
+  <link rel="stylesheet" href="./workspace.css">
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand" aria-label="Pseudo2Wasm">
+        <span class="brand-mark">P<span>2</span>W</span>
+        <span class="brand-name">Pseudo2Wasm</span>
+        <span class="brand-divider"></span>
+        <span class="brand-context">CAIE 9618 IDE</span>
+      </div>
+      <div class="top-actions">
+        <span id="save-state" class="save-state">Saved locally</span>
+        <button id="import-button" class="button button-subtle" title="Open pseudocode files or a project JSON">Open</button>
+        <input id="import-file" type="file" accept=".pseudo,.txt,.json" multiple hidden>
+        <button id="download-button" class="button button-subtle" title="Download compiled WebAssembly">Download .wasm</button>
+        <button id="compile-button" class="button button-outline" title="Compile (Ctrl+Shift+B)">Compile</button>
+        <button id="run-button" class="button button-primary" title="Run (Ctrl+Enter)"><span class="play-icon">▶</span> Run program</button>
+      </div>
+    </header>
+
+    <div class="workbench">
+      <nav class="activity-bar" aria-label="Views">
+        <div class="activity-symbol" title="Pseudo2Wasm">P<span>2</span>W</div>
+        <button id="toggle-explorer" class="activity-button active" title="Toggle Explorer" aria-label="Toggle Explorer" aria-pressed="true">▤</button>
+        <button id="toggle-tools" class="activity-button" title="Toggle Program Tools" aria-label="Toggle Program Tools" aria-pressed="false">⌘</button>
+        <button id="toggle-terminal" class="activity-button" title="Toggle Terminal" aria-label="Toggle Terminal" aria-pressed="true">›_</button>
+      </nav>
+      <aside class="sidebar" aria-label="Workspace">
+        <div class="sidebar-title">EXPLORER <span class="sidebar-title-actions"><button id="new-source" title="New pseudocode file" aria-label="New pseudocode file">＋</button><button id="import-source" title="Import pseudocode files" aria-label="Import pseudocode files">⇧</button></span></div>
+        <div class="sidebar-heading">PSEUDO2WASM <span id="source-count">01</span></div>
+        <div id="source-list" class="source-list"></div>
+        <div class="sidebar-file-actions"><button id="rename-source" title="Rename active file">Rename</button><button id="delete-source" title="Delete active file">Delete</button></div>
+        <div class="sidebar-heading examples-heading">EXAMPLES <span id="example-count">09</span></div>
+        <div id="example-list" class="example-list"></div>
+        <div class="sidebar-foot">
+          <div class="engine-chip"><span class="chip-square"></span> WASM compiler</div>
+          <p>Runs in your browser. Your code stays on this device.</p>
+        </div>
+      </aside>
+      <div id="left-resizer" class="resize-handle vertical" role="separator" tabindex="0" aria-label="Resize Explorer" aria-orientation="vertical"></div>
+
+      <main class="main-panel">
+        <div class="editor-surface">
+          <div class="editor-controls"><span id="active-file-label">main.pseudo</span><span class="editor-controls-spacer"></span><button id="split-editor" title="Split editor (Ctrl+\\)" aria-label="Split editor">▥ Split editor</button><button id="close-split" title="Close split editor" aria-label="Close split editor" hidden>×</button></div>
+          <div id="editor-area" class="editor-area">
+            <section id="primary-group" class="editor-group active-group" aria-label="Primary editor">
+              <div id="primary-tabs" class="editor-tabs" role="tablist" aria-label="Open files in primary editor"></div>
+              <div class="editor-wrap">
+                <div id="primary-gutter" class="line-numbers" aria-hidden="true"></div>
+                <div class="code-layer"><pre id="primary-highlight" class="code-highlight" aria-hidden="true"></pre><textarea id="primary-editor" class="code-editor" spellcheck="false" autocomplete="off" autocapitalize="off" aria-label="Primary pseudocode editor"></textarea></div>
+              </div>
+            </section>
+            <div id="split-resizer" class="resize-handle vertical split-resizer" role="separator" tabindex="0" aria-label="Resize editor split" aria-orientation="vertical" hidden></div>
+            <section id="secondary-group" class="editor-group" aria-label="Secondary editor" hidden>
+              <div id="secondary-tabs" class="editor-tabs" role="tablist" aria-label="Open files in secondary editor"></div>
+              <div class="editor-wrap">
+                <div id="secondary-gutter" class="line-numbers" aria-hidden="true"></div>
+                <div class="code-layer"><pre id="secondary-highlight" class="code-highlight" aria-hidden="true"></pre><textarea id="secondary-editor" class="code-editor" spellcheck="false" autocomplete="off" autocapitalize="off" aria-label="Secondary pseudocode editor"></textarea></div>
+              </div>
+            </section>
+          </div>
+        </div>
+        <div class="editor-status">
+          <div><span id="diagnostic-light" class="status-light"></span><span id="diagnostic-summary">Ready</span></div>
+          <div><span id="status-file">main.pseudo</span><span class="status-divider"></span><span id="cursor-position">Ln 1, Col 1</span><span class="status-divider"></span><span id="line-count">1 line</span><span class="status-divider"></span>UTF-8</div>
+        </div>
+        <div id="bottom-resizer" class="resize-handle horizontal" role="separator" tabindex="0" aria-label="Resize Terminal" aria-orientation="horizontal"></div>
+        <section class="bottom-panel" aria-label="Program results">
+          <div class="panel-tabs">
+            <button class="panel-tab active" data-console-tab="output">Output <span id="output-count" class="tab-count">0</span></button>
+            <button class="panel-tab" data-console-tab="diagnostics">Problems <span id="problem-count" class="tab-count">0</span></button>
+            <button class="panel-tab" data-console-tab="build">Build</button>
+            <button id="clear-output" class="clear-button">Clear</button>
+          </div>
+          <div class="console-content" id="console-content"><div class="empty-console"><span class="terminal-glyph">›_</span><span>Run your program to see output here.</span></div></div>
+        </section>
+      </main>
+      <div id="right-resizer" class="resize-handle vertical" role="separator" tabindex="0" aria-label="Resize Program Tools" aria-orientation="vertical"></div>
+
+      <aside class="inspector" aria-label="Program tools">
+        <div class="inspector-title"><span class="inspector-icon">⌘</span> Program tools</div>
+        <div class="inspector-tabs" role="tablist" aria-label="Program tools">
+          <button role="tab" class="inspector-tab active" data-tool="input" aria-selected="true">Input</button>
+          <button role="tab" class="inspector-tab" data-tool="files" aria-selected="false">Files</button>
+          <button role="tab" class="inspector-tab" data-tool="reference" aria-selected="false">Guide</button>
+        </div>
+        <div class="inspector-body">
+          <div class="tool-pane active" id="tool-input">
+            <label class="field-label" for="stdin">PRELOADED INPUT <span>OPTIONAL</span></label>
+            <textarea id="stdin" class="tool-textarea" placeholder="Optional values, one per line…" spellcheck="false"></textarea>
+            <p class="tool-hint"><code>INPUT</code> waits in the terminal when preloaded values run out.</p>
+            <div class="info-card"><div class="info-card-head">Execution limit</div><div class="info-card-value">250,000 steps</div><p>Runaway loops stop automatically and report their source line.</p></div>
+          </div>
+          <div class="tool-pane" id="tool-files">
+            <div class="files-header"><span class="field-label">VIRTUAL FILES</span><button id="add-file" class="tiny-button">+ New file</button></div>
+            <div id="virtual-file-list" class="virtual-file-list"></div>
+            <div id="file-editor-area" hidden><label id="file-editor-label" class="field-label" for="file-editor"></label><textarea id="file-editor" class="tool-textarea file-editor" spellcheck="false"></textarea><button id="remove-file" class="danger-link">Delete file</button></div>
+            <p class="tool-hint">Programs can use <code>OPENFILE</code>, <code>READFILE</code>, and <code>WRITEFILE</code>. Files are stored in this workspace.</p>
+          </div>
+          <div class="tool-pane" id="tool-reference">
+            <div class="reference-group"><h3>Variables &amp; output</h3><code>DECLARE X : INTEGER<br>X ← 42<br>OUTPUT X</code></div>
+            <div class="reference-group"><h3>Control flow</h3><code>IF … THEN / ELSE / ENDIF<br>CASE OF … / ENDCASE<br>FOR … TO … STEP … / NEXT<br>WHILE … / ENDWHILE<br>REPEAT … UNTIL …</code></div>
+            <div class="reference-group"><h3>Data &amp; routines</h3><code>ARRAY[1:5] OF INTEGER<br>TYPE … ENDTYPE<br>SET OF CHAR<br>FUNCTION … RETURNS …<br>PROCEDURE … / BYREF</code></div>
+            <div class="reference-group"><h3>Files &amp; classes</h3><code>OPENFILE … FOR READ<br>READFILE … / WRITEFILE …<br>CLASS … ENDCLASS<br>NEW ClassName(…)</code></div>
+            <a class="guide-link" href="https://www.cambridgeinternational.org/Images/697401-2026-pseudocode-guide-for-teachers.pdf" target="_blank" rel="noopener">Cambridge 2026 pseudocode guide ↗</a>
+          </div>
+        </div>
+        <div class="inspector-build"><span class="build-label">LAST BUILD</span><span id="build-status">No build yet</span><span id="build-size">—</span></div>
+      </aside>
+    </div>
+  </div>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
