@@ -567,7 +567,7 @@ function renderCompletions(which) {
 function acceptCompletion(which, index = panes[which].completionData?.selected) {
   const pane = panes[which], data = pane.completionData, item = data?.items[index]; if (!item) return;
   pane.editor.setRangeText(item.insert, data.start, data.end, 'end');
-  if (Number.isInteger(item.caret)) pane.editor.setSelectionRange(data.start + item.caret, data.start + item.caret);
+  if (item.select) pane.editor.setSelectionRange(data.start + item.select[0], data.start + item.select[1]);
   hideCompletions(which); pane.suppressCompletion = true; pane.editor.dispatchEvent(new Event('input', { bubbles: true })); pane.editor.focus();
 }
 function editLines(which, action) {

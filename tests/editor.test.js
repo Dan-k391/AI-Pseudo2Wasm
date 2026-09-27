@@ -22,6 +22,14 @@ test('member completion follows the declared record type', () => {
   assert.ok(!choices.includes('Score'));
 });
 
+test('block snippets select a meaningful placeholder after insertion', () => {
+  for (const keyword of ['IF', 'FOR', 'WHILE', 'REPEAT', 'CASE', 'FUNCTION', 'PROCEDURE', 'TYPE', 'CLASS']) {
+    const snippet = completions(keyword, keyword.length).items.find(item => item.kind === 'snippet');
+    assert.ok(snippet, `${keyword} snippet exists`);
+    assert.match(snippet.insert.slice(...snippet.select), /^(?:condition|Index|value|Name)$/);
+  }
+});
+
 test('error range selects the token at the parser location', () => {
   const source = 'DECLARE X : INTEGER\nOUTPUT @';
   const range = diagnosticRange(source, { line: 2, column: 8 });

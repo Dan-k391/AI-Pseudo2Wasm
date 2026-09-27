@@ -1,15 +1,15 @@
 const keywords = `DECLARE CONSTANT TYPE ENDTYPE DEFINE CLASS ENDCLASS PUBLIC PRIVATE INHERITS FUNCTION ENDFUNCTION PROCEDURE ENDPROCEDURE RETURNS RETURN BYREF BYVAL CALL NEW SUPER OUTPUT INPUT OPENFILE CLOSEFILE READFILE WRITEFILE GETRECORD PUTRECORD SEEK FOR TO STEP NEXT WHILE ENDWHILE REPEAT UNTIL IF THEN ELSE ENDIF CASE OF OTHERWISE ENDCASE AND OR NOT IN DIV MOD TRUE FALSE NULL INTEGER REAL BOOLEAN CHAR STRING DATE ARRAY SET READ WRITE APPEND RANDOM`.split(' ');
 const builtins = `LENGTH LEFT RIGHT MID UCASE LCASE TO_UPPER TO_LOWER NUM_TO_STR STR_TO_NUM IS_NUM ASC CHR INT RAND DAY MONTH YEAR DAYINDEX SETDATE TODAY EOF`.split(' ');
 const snippets = [
-  ['IF', 'IF condition THEN\n  \nENDIF', 20],
-  ['FOR', 'FOR Index ← 1 TO 10\n  \nNEXT Index', 25],
-  ['WHILE', 'WHILE condition\n  \nENDWHILE', 24],
-  ['REPEAT', 'REPEAT\n  \nUNTIL condition', 9],
-  ['CASE', 'CASE OF value\n  OTHERWISE : OUTPUT value\nENDCASE', 8],
-  ['FUNCTION', 'FUNCTION Name() RETURNS INTEGER\n  RETURN 0\nENDFUNCTION', 9],
-  ['PROCEDURE', 'PROCEDURE Name()\n  \nENDPROCEDURE', 9],
-  ['TYPE', 'TYPE Name\n  DECLARE Field : INTEGER\nENDTYPE', 5],
-  ['CLASS', 'CLASS Name\n  PUBLIC PROCEDURE NEW()\n  ENDPROCEDURE\nENDCLASS', 9],
+  ['IF', 'IF condition THEN\n  \nENDIF', 'condition'],
+  ['FOR', 'FOR Index ← 1 TO 10\n  \nNEXT Index', 'Index'],
+  ['WHILE', 'WHILE condition\n  \nENDWHILE', 'condition'],
+  ['REPEAT', 'REPEAT\n  \nUNTIL condition', 'condition'],
+  ['CASE', 'CASE OF value\n  OTHERWISE : OUTPUT value\nENDCASE', 'value'],
+  ['FUNCTION', 'FUNCTION Name() RETURNS INTEGER\n  RETURN 0\nENDFUNCTION', 'Name'],
+  ['PROCEDURE', 'PROCEDURE Name()\n  \nENDPROCEDURE', 'Name'],
+  ['TYPE', 'TYPE Name\n  DECLARE Field : INTEGER\nENDTYPE', 'Name'],
+  ['CLASS', 'CLASS Name\n  PUBLIC PROCEDURE NEW()\n  ENDPROCEDURE\nENDCLASS', 'Name'],
 ];
 
 function symbols(source) {
@@ -56,7 +56,7 @@ export function completions(source, cursor, fileNames = []) {
       ...symbols(source),
       ...builtins.map(label => ({ label, insert: label, kind: 'function', detail: 'Built-in function' })),
       ...keywords.map(label => ({ label, insert: label, kind: 'keyword', detail: 'CAIE pseudocode' })),
-      ...snippets.map(([label, insert, caret]) => ({ label: `${label} block`, insert, caret, kind: 'snippet', detail: 'Code block' })),
+      ...snippets.map(([label, insert, placeholder]) => ({ label: `${label} block`, insert, select: [insert.indexOf(placeholder), insert.indexOf(placeholder) + placeholder.length], kind: 'snippet', detail: 'Code block' })),
     ];
   }
   const unique = new Map();
