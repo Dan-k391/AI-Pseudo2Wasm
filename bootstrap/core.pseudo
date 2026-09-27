@@ -298,9 +298,20 @@ WHILE POSITION <= LENGTH(SOURCE)
       ENDIF
       IF CASE_COLON = 1 THEN
         CASE_COLON ← 0
+        QUOTE ← ""
         INDEX ← 1
         WHILE INDEX <= LENGTH(LINE)
-          IF MID(LINE, INDEX, 1) = ":" THEN
+          CHARACTER ← MID(LINE, INDEX, 1)
+          IF CHARACTER = CHR(34) OR CHARACTER = CHR(39) THEN
+            IF QUOTE = "" THEN
+              QUOTE ← CHARACTER
+            ELSE
+              IF QUOTE = CHARACTER THEN
+                QUOTE ← ""
+              ENDIF
+            ENDIF
+          ENDIF
+          IF CHARACTER = ":" AND QUOTE = "" AND CASE_COLON = 0 THEN
             CASE_COLON ← INDEX
           ENDIF
           INDEX ← INDEX + 1

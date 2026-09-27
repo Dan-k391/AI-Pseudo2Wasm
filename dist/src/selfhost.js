@@ -1,5 +1,6 @@
 import { createRuntime } from './runtime.js';
 import { PseudoError } from './parser.js';
+import { tryNativeLower } from './native-wasm.js';
 
 const fromLatin1 = value => Uint8Array.from(value, char => char.charCodeAt(0));
 
@@ -117,5 +118,6 @@ export async function compileSelfHostedSource(source, core, assembler) {
     maxSteps: 20000000,
   }).run();
   if (result.status !== 'completed') throw new Error(`Compiler stopped with status ${result.status}`);
-  return assembleSelfHosted(result.output, assembler);
+  const compatible = await assembleSelfHosted(result.output, assembler);
+  return tryNativeLower(source, compatible) || compatible;
 }

@@ -579,7 +579,7 @@ function renderConsole() {
     }
   } else {
     const info = document.createElement('div'); info.className = 'build-log';
-    if (buildInfo) info.innerHTML = `<strong>${escape(buildInfo.name)} · self-hosted build succeeded</strong><br>WebAssembly module: ${buildInfo.size.toLocaleString()} bytes<br>Routines: ${buildInfo.routines}<br>Imports: ${buildInfo.imports}<br>Compiled in ${buildInfo.ms.toFixed(1)} ms`;
+    if (buildInfo) info.innerHTML = `<strong>${escape(buildInfo.name)} · build succeeded</strong><br>Execution: ${buildInfo.native ? 'Native WASM' : 'Compatibility runtime'}<br>WebAssembly module: ${buildInfo.size.toLocaleString()} bytes<br>Routines: ${buildInfo.routines}<br>Imports: ${buildInfo.imports}<br>Compiled in ${buildInfo.ms.toFixed(1)} ms`;
     else info.textContent = 'Compile the active source file to inspect its WebAssembly module.';
     consoleContent.append(info);
     if (buildInfo) { const button = document.createElement('button'); button.className = 'tiny-button'; button.style.marginTop = '14px'; button.textContent = 'Download project .json'; button.addEventListener('click', downloadProject); consoleContent.append(button); }
@@ -592,10 +592,24 @@ function navigateTo(file, start, end = start, remember = true) {
   openSource(file);
   const editor = panes[project.activePane].editor;
   editor.setSelectionRange(start, end);
-  const line = editor.value.slice(0, start).split('\n').length - 1;
-  const target = line * 24 - editor.clientHeight / 3;
-  if (target < editor.scrollTop || target > editor.scrollTop + editor.clientHeight - 48) editor.scrollTop = Math.max(0, target);
+  revealEditorRange(project.activePane, start);
   updateStatus();
+}
+function revealEditorRange(which, start) {
+  const editor = panes[which].editor;
+  const before = editor.value.slice(0, start), line = before.split('\n').length - 1;
+  const column = before.length - before.lastIndexOf('\n') - 1;
+  const style = getComputedStyle(editor), lineHeight = parseFloat(style.lineHeight) || 24;
+  const top = line * lineHeight + (parseFloat(style.paddingTop) || 0);
+  if (top < editor.scrollTop || top + lineHeight > editor.scrollTop + editor.clientHeight)
+    editor.scrollTop = Math.max(0, top - editor.clientHeight / 3);
+  const characterWidth = parseFloat(style.fontSize) * 0.62;
+  const left = column * characterWidth + (parseFloat(style.paddingLeft) || 0);
+  if (left < editor.scrollLeft || left > editor.scrollLeft + editor.clientWidth - 40)
+    editor.scrollLeft = Math.max(0, left - editor.clientWidth / 3);
+  panes[which].highlight.scrollTop = editor.scrollTop;
+  panes[which].highlight.scrollLeft = editor.scrollLeft;
+  panes[which].gutter.scrollTop = editor.scrollTop;
 }
 function navigationTarget(which, offset = panes[which].editor.selectionStart) {
   const file = project.panes[which].active;
@@ -625,7 +639,7 @@ async function build() {
     if (name !== activeName() || source !== activeSource()) return null;
     const ms = performance.now() - start;
     lastCompiled = result; builtFile = name; builtSource = source;
-    buildInfo = { name, size: result.binary.length, routines: result.routines.length, imports: WebAssembly.Module.imports(new WebAssembly.Module(result.binary)).length, ms };
+    buildInfo = { name, size: result.binary.length, routines: result.routines.length, imports: WebAssembly.Module.imports(new WebAssembly.Module(result.binary)).length, native: !!result.native, ms };
     $('build-status').textContent = `${name} · succeeded`; $('build-size').textContent = `${result.binary.length.toLocaleString()} bytes · ${ms.toFixed(1)} ms`;
     setProblems(name, []); return result;
   } catch (error) {
@@ -785,6 +799,7 @@ function findNext(which, backwards = false, focus = true) {
   const match = state.matches[state.current];
   if (focus) pane.editor.focus();
   pane.editor.setSelectionRange(match.start, match.end);
+  revealEditorRange(which, match.start);
   $(`${which}-search-count`).textContent = `${state.current + 1} of ${state.matches.length}`;
   renderCode(which); updateStatus();
 }
@@ -849,7 +864,7 @@ for (const which of ['primary', 'secondary']) {
     if (event.key === 'Enter') { const before = pane.editor.value.slice(0, pane.editor.selectionStart), indent = before.slice(before.lastIndexOf('\n') + 1).match(/^\s*/)[0]; if (indent) { event.preventDefault(); pane.editor.setRangeText('\n' + indent, pane.editor.selectionStart, pane.editor.selectionEnd, 'end'); pane.editor.dispatchEvent(new Event('input')); } }
   });
   pane.searchInput.addEventListener('input', () => updateSearch(which));
-  pane.searchInput.addEventListener('keydown', event => { if (event.key === 'Escape') { pane.search.hidden = true; renderCode(which); pane.editor.focus(); } else if (event.key === 'Enter') { event.preventDefault(); findNext(which, event.shiftKey); } });
+  pane.searchInput.addEventListener('keydown', event => { if (event.key === 'Escape') { pane.search.hidden = true; renderCode(which); pane.editor.focus(); } else if (event.key === 'Enter' || event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); findNext(which, event.shiftKey || event.key === 'ArrowUp', event.key === 'Enter'); } });
   pane.replaceInput.addEventListener('keydown', event => { if (event.key === 'Escape') { pane.search.hidden = true; pane.editor.focus(); } else if (event.key === 'Enter') { event.preventDefault(); pane.search.querySelector('[data-search-action="replace"]').click(); } });
   pane.search.addEventListener('click', event => {
     const option = event.target.closest('[data-search-option]')?.dataset.searchOption;
@@ -857,7 +872,7 @@ for (const which of ['primary', 'secondary']) {
     const action = event.target.closest('[data-search-action]')?.dataset.searchAction; if (!action) return;
     if (action === 'close') { pane.search.hidden = true; renderCode(which); pane.editor.focus(); }
     else if (action === 'toggle-replace') { pane.search.classList.toggle('with-replace'); (pane.search.classList.contains('with-replace') ? pane.replaceInput : pane.searchInput).focus(); }
-    else if (action === 'next' || action === 'previous') findNext(which, action === 'previous');
+    else if (action === 'next' || action === 'previous') findNext(which, action === 'previous', false);
     else replaceSearch(which, action === 'all');
   });
 }

@@ -1,6 +1,7 @@
 import { PseudoError } from './parser.js';
 import { MemoryString, StringMemory } from './string-memory.js';
 import { CellMemory } from './cell-memory.js';
+import { createNativeRuntime } from './native-runtime.js';
 
 class InputRequired extends Error {
   constructor(label, line) { super(`Input required for ${label}`); this.name = 'InputRequired'; this.label = label; this.line = line; }
@@ -30,6 +31,7 @@ const clone = value => {
 };
 
 export function createRuntime(compiled, options = {}) {
+  if (compiled.native) return createNativeRuntime(compiled, options);
   const { strings, types, classes, routines } = compiled;
   const globals = new Map(), scopes = [globals], output = [], pendingThis = [], frames = [];
   const nameIds = new Map();

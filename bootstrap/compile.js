@@ -1,8 +1,7 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, extname, join, resolve } from 'node:path';
-import { createRuntime } from '../src/runtime.js';
-import { assembleSelfHosted } from './assemble-self.js';
+import { compileSelfHostedSource } from '../src/selfhost.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -20,13 +19,8 @@ export async function loadSelfHostedCompiler() {
 }
 
 export async function compileSelfHosted(source, compiler) {
-  const result = await createRuntime(compiler, {
-    inputLines: [source.replace(/\r\n/g, '\n')],
-    maxSteps: 10000000,
-  }).run();
-  if (result.status !== 'completed') throw new Error(`Compiler stopped with status ${result.status}`);
   if (!compiler.assembler) throw new Error('Self-hosted assembler is missing');
-  return assembleSelfHosted(result.output, compiler.assembler);
+  return compileSelfHostedSource(source, compiler, compiler.assembler);
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url).toLowerCase() === resolve(process.argv[1]).toLowerCase()) {
@@ -43,7 +37,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url).toLowerCase() === resolve(
       await writeFile(outputPath, result.binary);
       const extension = extname(outputPath);
       const metadataPath = extension ? outputPath.slice(0, -extension.length) + '.meta.json' : outputPath + '.meta.json';
-      await writeFile(metadataPath, JSON.stringify({ strings: result.strings, literalStrings: result.literalStrings, types: result.types, classes: result.classes, routines: result.routines }, null, 2));
+      await writeFile(metadataPath, JSON.stringify({ strings: result.strings, literalStrings: result.literalStrings, types: result.types, classes: result.classes, routines: result.routines, native: !!result.native, nativeLabels: result.nativeLabels, nativeDataEnd: result.nativeDataEnd, nativeGlobalBase: result.nativeGlobalBase, nativeFrameBase: result.nativeFrameBase }, null, 2));
       console.log(`Compiled ${inputPath} with self-hosted core → ${outputPath} (${result.binary.length} bytes)`);
     } catch (error) {
       console.error(error.message);

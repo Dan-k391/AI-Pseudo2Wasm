@@ -1,6 +1,6 @@
 # Pseudo2Wasm
 
-A dependency-free compiler and browser IDE for Cambridge International AS & A Level Computer Science (9618) pseudocode. The browser compiles source with a self-hosted WebAssembly compiler and assembler written in pseudocode. Generated modules embed UTF-8 literals and store dynamic strings and addressable `BYREF` slots in exported WebAssembly memory. A JavaScript runtime supplies input/output, type checks, composite values, and virtual files through host imports.
+A dependency-free compiler and browser IDE for Cambridge International AS & A Level Computer Science (9618) pseudocode. The browser compiles source with a self-hosted WebAssembly compiler and assembler written in pseudocode. Eligible programs then receive a native WASM lowering pass: scalar variables, numeric arrays and records, arithmetic, control flow, routine frames, and `BYREF` addresses run in WASM memory. Strings are memory-backed too; concatenation and equality execute in WASM. JavaScript handles input/output and selected built-ins. Unsupported features continue through the compatibility runtime.
 
 ## Run locally
 
