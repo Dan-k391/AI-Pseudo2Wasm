@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { compile, run, PseudoError } from '../src/index.js';
+import { compile, run, createRuntime, PseudoError } from '../src/index.js';
 
 async function output(source, options) {
   const built = compile(source);
@@ -98,6 +98,80 @@ Result ← Factorial(5)
 CALL AddOne(Result)
 OUTPUT Result
 `), ['121']);
+});
+
+test('BYREF uses a WASM memory address for numeric cells', async () => {
+  const built = compile(`PROCEDURE Increase(BYREF N : INTEGER)
+  N ← N + 1
+ENDPROCEDURE
+DECLARE X : INTEGER
+X ← 41
+CALL Increase(X)
+OUTPUT X
+`);
+  const runtime = createRuntime(built);
+  const result = await runtime.run();
+  assert.deepEqual(result.output, ['42']);
+  const id = built.strings.indexOf('X');
+  const address = runtime.env.refName(id);
+  assert.equal(typeof address, 'bigint');
+  const view = new DataView(result.memory.buffer);
+  assert.equal(view.getUint32(Number(address), true), 1);
+  assert.equal(view.getFloat64(Number(address) + 8, true), 42);
+  runtime.env.set(id, 17);
+  assert.equal(view.getFloat64(Number(address) + 8, true), 17);
+});
+
+test('BYREF string slots point to UTF-8 bytes after concatenation', async () => {
+  const built = compile(`PROCEDURE Exclaim(BYREF Text : STRING)
+  Text ← Text & "!"
+ENDPROCEDURE
+DECLARE Message : STRING
+Message ← "café"
+CALL Exclaim(Message)
+OUTPUT Message
+`);
+  const runtime = createRuntime(built);
+  const result = await runtime.run();
+  assert.deepEqual(result.output, ['café!']);
+  const address = Number(runtime.env.refName(built.strings.indexOf('MESSAGE')));
+  const view = new DataView(result.memory.buffer);
+  assert.equal(view.getUint32(address, true), 3);
+  const pointer = view.getUint32(address + 4, true);
+  const byteLength = view.getUint32(pointer, true);
+  assert.equal(new TextDecoder().decode(new Uint8Array(result.memory.buffer, pointer + 4, byteLength)), 'café!');
+});
+
+test('BYREF array aliases and pointer dereferences keep their target', async () => {
+  assert.deepEqual(await output(`PROCEDURE Increase(BYREF N : INTEGER)
+  N ← N + 1
+ENDPROCEDURE
+DECLARE Values : ARRAY[1:2] OF INTEGER
+DECLARE P : ^INTEGER
+Values[2] ← 8
+CALL Increase(Values[2])
+P ← ^Values[2]
+P^ ← P^ + 1
+OUTPUT Values[2]
+`), ['10']);
+});
+
+test('nested BYREF aliases keep one address and recycle temporary slots', async () => {
+  const result = await run(`PROCEDURE Deep(BYREF N : INTEGER, Level : INTEGER)
+  IF Level > 0 THEN
+    CALL Deep(N, Level - 1)
+  ENDIF
+  N ← N + 1
+ENDPROCEDURE
+DECLARE Values : ARRAY[1:1] OF INTEGER
+DECLARE I : INTEGER
+FOR I ← 1 TO 1000
+  CALL Deep(Values[1], 2)
+NEXT I
+OUTPUT Values[1]
+`, { maxSteps: 100000 });
+  assert.deepEqual(result.output, ['3000']);
+  assert.ok(result.stringBytes < 4096, 'temporary reference slots are reused');
 });
 
 test('text file operations and input', async () => {

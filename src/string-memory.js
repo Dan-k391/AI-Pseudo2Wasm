@@ -34,7 +34,10 @@ export class StringMemory {
   literal(index) { return this.literals[index]; }
   reserve(size) {
     const end = this.top + size;
-    if (end > this.memory.buffer.byteLength) this.memory.grow(Math.ceil((end - this.memory.buffer.byteLength) / 65536));
+    if (end > this.memory.buffer.byteLength) {
+      this.memory.grow(Math.ceil((end - this.memory.buffer.byteLength) / 65536));
+      this.onGrow?.();
+    }
     const pointer = this.top;
     this.top = (end + 3) & ~3;
     return pointer;
@@ -48,7 +51,7 @@ export class StringMemory {
     return new MemoryString(this, { pointer, byteLength: bytes.length, length: source.length, cached: source });
   }
   from(value) {
-    if (value instanceof MemoryString) return value;
+    if (value instanceof MemoryString) return value.heap === this ? value : this.allocate(value.toString());
     if (typeof value !== 'string') return value;
     if (value.length > 128) return this.allocate(value);
     let result = this.interned.get(value);

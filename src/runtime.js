@@ -1,5 +1,6 @@
 import { PseudoError } from './parser.js';
 import { MemoryString, StringMemory } from './string-memory.js';
+import { CellMemory } from './cell-memory.js';
 
 class InputRequired extends Error {
   constructor(label, line) { super(`Input required for ${label}`); this.name = 'InputRequired'; this.label = label; this.line = line; }
@@ -31,10 +32,17 @@ const clone = value => {
 export function createRuntime(compiled, options = {}) {
   const { strings, types, classes, routines } = compiled;
   const globals = new Map(), scopes = [globals], output = [], pendingThis = [], frames = [];
+  const nameIds = new Map();
+  const canonicalIds = strings.map((value, index) => {
+    if (!nameIds.has(value)) nameIds.set(value, index);
+    return nameIds.get(value);
+  });
+  const activeCells = new Array(strings.length), activeRefs = new Array(strings.length), scopeChanges = [];
+  const routineParamIds = routines.map(routine => routine.params.map(param => nameIds.get(param.name)));
   const files = Object.fromEntries(Object.entries(options.files || {}).map(([k, v]) => [k, String(v)]));
   const records = clone(options.records || {}), handles = new Map();
   const input = Array.isArray(options.inputLines) ? [...options.inputLines] : (String(options.input || '') ? String(options.input).replace(/\r/g, '').replace(/\n$/, '').split('\n') : []);
-  let inputPos = 0, steps = 0, line = 1, wasm = null, stringMemory = null;
+  let inputPos = 0, steps = 0, line = 1, wasm = null, stringMemory = null, cellMemory = null;
   const text = value => stringMemory.from(value);
   let randomState = (options.seed ?? (Math.random() * 0x100000000)) >>> 0;
   const random = () => { randomState ^= randomState << 13; randomState ^= randomState >>> 17; randomState ^= randomState << 5; return (randomState >>> 0) / 0x100000000; };
@@ -101,6 +109,8 @@ export function createRuntime(compiled, options = {}) {
     }
   }
   function cell(key) {
+    const id = nameIds.get(key);
+    if (id !== undefined && activeCells[id]) return activeCells[id];
     for (let i = scopes.length - 1; i >= 0; i--) if (scopes[i].has(key)) return scopes[i].get(key);
     for (let i = scopes.length - 1; i >= 0; i--) {
       const self = scopes[i].get('$THIS')?.value;
@@ -108,13 +118,22 @@ export function createRuntime(compiled, options = {}) {
     }
     fail(`Undeclared identifier ${key}`);
   }
+  function bind(scope, key, slot, id = nameIds.get(key), reference = undefined) {
+    scope.set(key, slot);
+    if (id !== undefined) {
+      if (scope !== globals) scopeChanges.push(id, activeCells[id], activeRefs[id]);
+      activeCells[id] = slot;
+      activeRefs[id] = reference;
+    }
+  }
+  const cellById = id => activeCells[canonicalIds[id]] || cell(name(id));
   const read = ref => ref.value;
   const write = (ref, value) => {
     if (ref.constant) fail('Cannot assign to a constant');
     if (!matches(ref.type, value)) fail(`Expected ${ref.type?.name || ref.type?.kind}, got ${show(value)}`);
     ref.value = clone(text(value));
+    cellMemory.sync(ref);
   };
-  const refName = key => cell(key);
   function indexCell(target, indices) {
     if (!target?.__array) fail('Indexing requires an array');
     if (indices.length !== target.ranges.length) fail(`Expected ${target.ranges.length} array indices`);
@@ -222,21 +241,27 @@ export function createRuntime(compiled, options = {}) {
     if (!wasm) fail('WebAssembly module is not ready');
     return info;
   }
-  const prepareMethodArgs = (info, args) => args.map((arg, i) => info.params[i]?.byref ? arg : arg?.__ref ? arg.cell.value : arg);
+  const prepareMethodArgs = (info, args) => args.map((arg, i) => {
+    const reference = cellMemory.lookup(arg);
+    if (info.params[i]?.byref || !reference) return arg;
+    const value = reference.cell.value;
+    if (reference.transient) cellMemory.release(arg);
+    return value;
+  });
   for (const [typeName, type] of Object.entries(types)) if (type.kind === 'enum') {
-    type.values.forEach((item, ordinal) => globals.set(item, { type: { kind: 'enum', values: type.values }, value: { __enum: true, typeName, name: item, ordinal }, constant: true }));
+    type.values.forEach((item, ordinal) => bind(globals, item, { type: { kind: 'enum', values: type.values }, value: { __enum: true, typeName, name: item, ordinal }, constant: true }));
   }
   const env = {
     tick(n) { line = n; if (++steps > maxSteps) fail(`Execution limit (${maxSteps.toLocaleString()} steps) reached`); },
     num: n => n, str: i => stringMemory.literal(i) || text(name(i)), bool: n => !!n,
-    get: i => read(cell(name(i))), set: (i, v) => write(cell(name(i)), v),
+    get: i => read(cellById(i)), set: (i, v) => write(cellById(i), v),
     declare(i, typeId, value) {
       const key = name(i), scope = scopes.at(-1);
       if (scope.has(key)) fail(`${key} is already declared`);
       const type = parseType(typeId), constant = name(typeId) === '$CONSTANT';
-      if (constant) scope.set(key, { type: null, value: clone(text(value)), constant: true });
-      else if (Array.isArray(value) && resolveType(type)?.kind === 'set') scope.set(key, { type, value: new Set(value), constant: false });
-      else scope.set(key, { type, value: text(value), constant: false });
+      if (constant) bind(scope, key, { type: null, value: clone(text(value)), constant: true });
+      else if (Array.isArray(value) && resolveType(type)?.kind === 'set') bind(scope, key, { type, value: new Set(value), constant: false });
+      else bind(scope, key, { type, value: text(value), constant: false });
     },
     loopVar(i, typeId, value) {
       const key = name(i), scope = scopes.at(-1), type = parseType(typeId);
@@ -244,13 +269,18 @@ export function createRuntime(compiled, options = {}) {
         const slot = scope.get(key);
         if (slot.constant) fail(`Cannot reset constant ${key}`);
         slot.value = clone(text(value));
-      } else scope.set(key, { type, value: clone(text(value)), constant: false });
+        cellMemory.sync(slot);
+      } else bind(scope, key, { type, value: clone(text(value)), constant: false });
     },
     binary, unary(op, value) {
       if (op === 0) { if (typeof value !== 'boolean') fail('NOT needs a BOOLEAN'); return !value; }
       if (op === 1) return -Number(value);
       if (op === 2) return +Number(value);
-      if (op === 3) return { __pointer: true, cell: value?.__ref ? value.cell : value };
+      if (op === 3) {
+        const target = cellMemory.has(value) ? cellMemory.cell(value) : value;
+        if (cellMemory.has(value)) cellMemory.release(value);
+        return { __pointer: true, cell: target };
+      }
       fail('Unknown unary operator');
     },
     truth(v) { if (typeof v !== 'boolean') fail('Condition needs a BOOLEAN'); return v ? 1 : 0; },
@@ -258,10 +288,10 @@ export function createRuntime(compiled, options = {}) {
     output: a => { const lineText = a.map(show).join(''); output.push(lineText); options.onOutput?.(lineText); },
     input(ref) {
       if (inputPos >= input.length) {
-        if (options.interactive) throw new InputRequired(ref?.label || 'value', line);
+        if (options.interactive) throw new InputRequired(cellMemory.has(ref) ? cellMemory.label(ref) : 'value', line);
         fail('INPUT needs another line');
       }
-      const target = ref?.__ref ? ref.cell : ref;
+      const target = cellMemory.has(ref) ? cellMemory.cell(ref) : ref;
       const raw = input[inputPos++], type = resolveType(target.type);
       let value = raw;
       if (type?.name === 'INTEGER') value = Number(raw);
@@ -269,34 +299,50 @@ export function createRuntime(compiled, options = {}) {
       if (type?.name === 'BOOLEAN') value = raw.toUpperCase() === 'TRUE';
       if (type?.name === 'DATE') { const m = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/); value = m ? new Date(Date.UTC(+m[3], +m[2] - 1, +m[1])) : new Date(raw); }
       write(target, text(value));
+      if (cellMemory.has(ref)) cellMemory.release(ref);
     },
     index: (v, a) => read(indexCell(v, a)), setIndex: (v, a, x) => write(indexCell(v, a), x),
     field: (v, i) => read(fieldCell(v, name(i))), setField: (v, i, x) => write(fieldCell(v, name(i)), x),
     enter(i, a) {
       const routine = routines[i], scope = new Map();
       if (a.length !== routine.params.length) fail(`${routine.name} expects ${routine.params.length} argument${routine.params.length === 1 ? '' : 's'}`);
+      scope.changeMark = scopeChanges.length;
+      scopes.push(scope);
       if (routine.className) {
         const self = pendingThis.pop(); if (!self) fail('Method needs an object');
-        scope.set('$THIS', { value: self });
-        scope.set('SUPER', { value: { ...self, __super: classes[routine.className].parent } });
+        bind(scope, '$THIS', { value: self });
+        bind(scope, 'SUPER', { value: { ...self, __super: classes[routine.className].parent } });
       }
+      let borrowed = null;
       routine.params.forEach((param, j) => {
-        if (param.byref) { if (!a[j] || !a[j].__ref) fail(`${param.name} needs BYREF argument`); scope.set(param.name, a[j].cell); }
-        else { if (!matches(param.type, a[j])) fail(`Invalid argument for ${param.name}`); scope.set(param.name, { type: param.type, value: clone(text(a[j])), constant: false }); }
+        if (param.byref) {
+          const reference = cellMemory.lookup(a[j]);
+          if (!reference) fail(`${param.name} needs BYREF argument`);
+          bind(scope, param.name, reference.cell, routineParamIds[i][j], a[j]);
+          if (reference.transient) (borrowed ??= []).push(a[j]);
+        }
+        else { if (!matches(param.type, a[j])) fail(`Invalid argument for ${param.name}`); bind(scope, param.name, { type: param.type, value: clone(text(a[j])), constant: false }, routineParamIds[i][j]); }
       });
-      scopes.push(scope); frames.push(routine);
+      frames.push(routine, borrowed);
     },
     leave(value) {
-      const routine = frames.pop();
+      const borrowed = frames.pop(), routine = frames.pop();
       if (routine.kind === 'function' && (value === null || !matches(routine.returns, value))) fail(`${routine.name} must return ${routine.returns?.name || routine.returns?.kind}`);
-      scopes.pop(); return value;
+      const scope = scopes.pop();
+      while (scopeChanges.length > scope.changeMark) {
+        const previousRef = scopeChanges.pop(), previousCell = scopeChanges.pop(), id = scopeChanges.pop();
+        activeCells[id] = previousCell;
+        activeRefs[id] = previousRef;
+      }
+      if (borrowed) for (const reference of borrowed) cellMemory.release(reference);
+      return value;
     },
     create: (i, bounds) => defaultValue(parseType(i), bounds),
     fileOp, forContinue(current, end, step) { if (!isNumber(step) || step === 0) fail('FOR STEP must be a nonzero number'); return step > 0 ? current <= end : current >= end; },
     caseMatches(v, lo, hi, range) { v = scalar(v); lo = scalar(lo); hi = scalar(hi); return range ? v >= lo && v <= hi : same(v, lo); },
-    refName: i => ({ __ref: true, cell: refName(name(i)), label: name(i) }),
-    refIndex: (v, a) => ({ __ref: true, cell: indexCell(v, a), label: 'array element' }),
-    refField: (v, i) => ({ __ref: true, cell: fieldCell(v, name(i)), label: name(i) }),
+    refName: i => activeRefs[canonicalIds[i]] === undefined ? cellMemory.promote(cellById(i), name(i)) : cellMemory.retain(activeRefs[canonicalIds[i]]),
+    refIndex: (v, a) => cellMemory.alias(indexCell(v, a), 'array element'),
+    refField: (v, i) => cellMemory.alias(fieldCell(v, name(i)), name(i)),
     deref(v) { if (!v?.__pointer) fail('Cannot dereference non-pointer'); return read(v.cell); },
     setDeref(v, x) { if (!v?.__pointer) fail('Cannot dereference non-pointer'); write(v.cell, x); },
     newObject(i, args) {
@@ -314,11 +360,13 @@ export function createRuntime(compiled, options = {}) {
       return wasm.exports[method.exportName](prepareMethodArgs(method, args));
     },
   };
-  // References are passed as small host objects across the externref boundary.
+  // A BYREF externref carries an address into the module's linear memory.
   const baseWriteFile = env.fileOp;
   env.fileOp = (op, args) => {
-    if ((op === 2 || op === 5) && args[1]?.__ref) args[1] = args[1].cell;
-    return baseWriteFile(op, args);
+    const reference = (op === 2 || op === 5) && cellMemory.has(args[1]) ? args[1] : null;
+    if (reference !== null) args[1] = cellMemory.cell(reference);
+    try { return baseWriteFile(op, args); }
+    finally { if (reference !== null) cellMemory.release(reference); }
   };
   return {
     env, output, files, records,
@@ -328,10 +376,15 @@ export function createRuntime(compiled, options = {}) {
         const result = await WebAssembly.instantiate(compiled.binary, { env });
         wasm = result.instance || result;
         stringMemory = new StringMemory(wasm.exports.memory || new WebAssembly.Memory({ initial: 1 }), compiled.literalStrings || strings, !!wasm.exports.memory);
+        cellMemory = new CellMemory(stringMemory);
         wasm.exports.main();
+        cellMemory.syncAll();
         return { status: 'completed', output: [...output], files: { ...files }, records: stringMemory.plain(records), steps, binary: compiled.binary, memory: stringMemory.memory, stringBytes: stringMemory.top };
       } catch (error) {
-        if (error instanceof InputRequired) return { status: 'waiting', output: [...output], files: { ...files }, records: { ...records }, steps, line: error.line, label: error.label, binary: compiled.binary };
+        if (error instanceof InputRequired) {
+          cellMemory?.syncAll();
+          return { status: 'waiting', output: [...output], files: { ...files }, records: stringMemory.plain(records), steps, line: error.line, label: error.label, binary: compiled.binary };
+        }
         if (error instanceof PseudoError) throw error;
         throw new PseudoError(error.message, line, 1);
       }
