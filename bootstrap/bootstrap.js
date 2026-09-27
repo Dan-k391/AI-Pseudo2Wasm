@@ -46,10 +46,11 @@ export async function bootstrap() {
 if (process.argv[1] && fileURLToPath(import.meta.url).toLowerCase() === process.argv[1].toLowerCase()) {
   const compiled = await bootstrap();
   const outputDir = join(here, 'build');
+  const metadata = ({ strings, types, classes, routines }) => JSON.stringify({ strings, types, classes, routines });
   await mkdir(outputDir, { recursive: true });
   await writeFile(join(outputDir, 'core.wasm'), compiled.binary);
-  await writeFile(join(outputDir, 'core.json'), JSON.stringify({ strings: compiled.strings, types: {}, classes: {}, routines: [] }));
+  await writeFile(join(outputDir, 'core.json'), metadata(compiled));
   await writeFile(join(outputDir, 'assembler.wasm'), compiled.assembler.binary);
-  await writeFile(join(outputDir, 'assembler.json'), JSON.stringify({ strings: compiled.assembler.strings, types: {}, classes: {}, routines: [] }));
+  await writeFile(join(outputDir, 'assembler.json'), metadata(compiled.assembler));
   console.log(`Self-hosted compiler and assembler reproduced themselves (${compiled.binary.length} + ${compiled.assembler.binary.length} bytes).`);
 }

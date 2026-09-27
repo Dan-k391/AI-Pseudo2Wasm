@@ -2,10 +2,25 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRuntime } from '../src/runtime.js';
 import { bootstrap, coreSource } from '../bootstrap/bootstrap.js';
-import { compileSelfHosted } from '../bootstrap/compile.js';
+import { compileSelfHosted, loadSelfHostedCompiler } from '../bootstrap/compile.js';
 import { advancedExamples } from '../web/examples.js';
 
 const bootstrapped = bootstrap();
+
+test('the packaged self-hosted compiler reads virtual text files', async () => {
+  const compiler = await loadSelfHostedCompiler();
+  const source = `DECLARE i : STRING
+OPENFILE "data.txt" FOR READ
+WHILE NOT EOF("data.txt")
+  READFILE "data.txt", i
+  OUTPUT i
+ENDWHILE
+CLOSEFILE "data.txt"
+`;
+  const built = await compileSelfHosted(source, compiler);
+  const result = await createRuntime(built, { files: { 'data.txt': 'first\nsecond\n' } }).run();
+  assert.deepEqual(result.output, ['first', 'second']);
+});
 
 test('the bootstrapped compiler rebuilds itself and compiles control flow', async () => {
   const core = await bootstrapped;
