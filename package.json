@@ -1,0 +1,12 @@
+{
+  "name": "pseudo2wasm",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Dependency-free CAIE pseudocode to WebAssembly compiler and IDE",
+  "scripts": {
+    "test": "node tests/compiler.test.js",
+    "build": "node build.js",
+    "serve": "node server.js"
+  }
+}
