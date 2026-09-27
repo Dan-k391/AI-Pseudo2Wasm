@@ -188,9 +188,17 @@ export function compileAst(ast) {
   const typeSection = section(1, [...u(typeSigs.length), ...typeSigs.flatMap(([params, result]) => [0x60, ...bytes(params), ...bytes(result)])]);
   const importSection = section(2, [...u(IMPORTS.length), ...IMPORTS.flatMap((x, i) => [...utf('env'), ...utf(x[0]), 0x00, ...u(i)])]);
   const functionSection = section(3, [...u(routines.length + 1), ...routines.map(() => IMPORTS.length), IMPORTS.length + 1]);
+  const staticData = [];
+  for (const value of strings) {
+    const encoded = enc.encode(value), length = encoded.length;
+    staticData.push(length & 255, (length >>> 8) & 255, (length >>> 16) & 255, (length >>> 24) & 255, ...encoded);
+    while (staticData.length & 3) staticData.push(0);
+  }
+  const memorySection = section(5, [1, 0, ...u(Math.max(1, Math.ceil((8 + staticData.length) / 65536)))]);
   const exports = routines.map((n, i) => [n.exportName, IMPORTS.length + i]).concat([['main', IMPORTS.length + routines.length]]);
-  const exportSection = section(7, [...u(exports.length), ...exports.flatMap(([name, index]) => [...utf(name), 0x00, ...u(index)])]);
+  const exportSection = section(7, [...u(exports.length + 1), ...exports.flatMap(([name, index]) => [...utf(name), 0x00, ...u(index)]), ...utf('memory'), 0x02, 0]);
   const codeSection = section(10, [...u(bodies.length + 1), ...bodies.flat(), ...main]);
-  const binary = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0, ...typeSection, ...importSection, ...functionSection, ...exportSection, ...codeSection]);
+  const dataSection = section(11, [1, 0, 0x41, 8, 0x0b, ...bytes(staticData)]);
+  const binary = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0, ...typeSection, ...importSection, ...functionSection, ...memorySection, ...exportSection, ...codeSection, ...dataSection]);
   return { binary, strings, types, classes, routines, ast };
 }

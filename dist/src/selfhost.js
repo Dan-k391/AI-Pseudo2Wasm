@@ -104,10 +104,11 @@ export async function assembleSelfHosted(ir, assembler) {
     } else throw new Error(`Unexpected assembler output: ${line.slice(0, 80)}`);
   }
   if (!binary || !WebAssembly.validate(binary)) throw new Error('Assembler emitted invalid WebAssembly');
+  const literalStrings = [...strings];
   for (let i = 0; i < strings.length; i++) {
     if (strings[i].startsWith('\x1fARRAY|')) strings[i] = JSON.stringify(decodeType(strings[i]));
   }
-  return { binary, strings, types, classes, routines };
+  return { binary, strings, literalStrings, types, classes, routines };
 }
 
 export async function compileSelfHostedSource(source, core, assembler) {

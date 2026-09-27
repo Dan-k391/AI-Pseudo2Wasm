@@ -1,13 +1,15 @@
 import { PseudoError } from './parser.js';
+import { MemoryString, StringMemory } from './string-memory.js';
 
 class InputRequired extends Error {
   constructor(label, line) { super(`Input required for ${label}`); this.name = 'InputRequired'; this.label = label; this.line = line; }
 }
 
-const scalar = value => value && value.__enum ? value.name : value;
+const scalar = value => value && value.__enum ? value.name : value instanceof MemoryString ? value.toString() : value;
 const isNumber = value => typeof value === 'number' && Number.isFinite(value);
 function show(value) {
   if (value === null || value === undefined) return 'NULL';
+  if (value instanceof MemoryString) return value.toString();
   if (typeof value === 'boolean') return value ? 'TRUE' : 'FALSE';
   if (value instanceof Date) return `${String(value.getUTCDate()).padStart(2, '0')}/${String(value.getUTCMonth() + 1).padStart(2, '0')}/${value.getUTCFullYear()}`;
   if (value instanceof Set) return `{${[...value].map(show).join(', ')}}`;
@@ -18,6 +20,7 @@ function show(value) {
   return String(value);
 }
 const clone = value => {
+  if (value instanceof MemoryString) return value;
   if (value instanceof Set) return new Set([...value].map(clone));
   if (value instanceof Date) return new Date(value);
   if (value && value.__array) return { ...value, data: value.data.map(clone) };
@@ -31,7 +34,8 @@ export function createRuntime(compiled, options = {}) {
   const files = Object.fromEntries(Object.entries(options.files || {}).map(([k, v]) => [k, String(v)]));
   const records = clone(options.records || {}), handles = new Map();
   const input = Array.isArray(options.inputLines) ? [...options.inputLines] : (String(options.input || '') ? String(options.input).replace(/\r/g, '').replace(/\n$/, '').split('\n') : []);
-  let inputPos = 0, steps = 0, line = 1, wasm = null;
+  let inputPos = 0, steps = 0, line = 1, wasm = null, stringMemory = null;
+  const text = value => stringMemory.from(value);
   let randomState = (options.seed ?? (Math.random() * 0x100000000)) >>> 0;
   const random = () => { randomState ^= randomState << 13; randomState ^= randomState >>> 17; randomState ^= randomState << 5; return (randomState >>> 0) / 0x100000000; };
   const today = options.today ? new Date(options.today) : new Date();
@@ -71,7 +75,7 @@ export function createRuntime(compiled, options = {}) {
     if (type.kind === 'enum') return { __enum: true, name: type.values[0], ordinal: 0 };
     switch (type.name) {
       case 'INTEGER': case 'REAL': return 0;
-      case 'STRING': case 'CHAR': return '';
+      case 'STRING': case 'CHAR': return text('');
       case 'BOOLEAN': return false;
       case 'DATE': return new Date(Date.UTC(1970, 0, 1));
       default: fail(`Unknown type ${type.name}`);
@@ -89,8 +93,8 @@ export function createRuntime(compiled, options = {}) {
     switch (type.name) {
       case 'INTEGER': return Number.isInteger(value);
       case 'REAL': return isNumber(value);
-      case 'STRING': return typeof value === 'string';
-      case 'CHAR': return typeof value === 'string' && value.length === 1;
+      case 'STRING': return typeof value === 'string' || value instanceof MemoryString;
+      case 'CHAR': return (typeof value === 'string' || value instanceof MemoryString) && value.length === 1;
       case 'BOOLEAN': return typeof value === 'boolean';
       case 'DATE': return value instanceof Date && !Number.isNaN(+value);
       default: return true;
@@ -108,7 +112,7 @@ export function createRuntime(compiled, options = {}) {
   const write = (ref, value) => {
     if (ref.constant) fail('Cannot assign to a constant');
     if (!matches(ref.type, value)) fail(`Expected ${ref.type?.name || ref.type?.kind}, got ${show(value)}`);
-    ref.value = clone(value);
+    ref.value = clone(text(value));
   };
   const refName = key => cell(key);
   function indexCell(target, indices) {
@@ -133,9 +137,10 @@ export function createRuntime(compiled, options = {}) {
   const same = (a, b) => {
     if (a?.__enum && b?.__enum) return a.name === b.name;
     if (a instanceof Date && b instanceof Date) return +a === +b;
-    return a === b;
+    return scalar(a) === scalar(b);
   };
   const binary = (op, a, b) => {
+    if (op === 9) return stringMemory.concat(a instanceof MemoryString ? a : show(a), b instanceof MemoryString ? b : show(b));
     a = scalar(a); b = scalar(b);
     switch (op) {
       case 0: return Boolean(a) || Boolean(b);
@@ -146,8 +151,7 @@ export function createRuntime(compiled, options = {}) {
       case 5: return a <= b;
       case 6: return a > b;
       case 7: return a >= b;
-      case 8: return b instanceof Set ? b.has(a) : fail('IN needs a set on the right');
-      case 9: return show(a) + show(b);
+      case 8: return b instanceof Set ? (b.has(a) || [...b].some(item => same(item, a))) : fail('IN needs a set on the right');
       case 10: numerical(a, b, '+'); return a + b;
       case 11: numerical(a, b, '-'); return a - b;
       case 12: numerical(a, b, '*'); return a * b;
@@ -159,10 +163,10 @@ export function createRuntime(compiled, options = {}) {
   };
   const date = value => { if (!(value instanceof Date)) fail('Expected DATE'); return value; };
   const integer = value => { if (!Number.isInteger(value)) fail('Expected INTEGER'); return value; };
-  const string = value => { if (typeof value !== 'string') fail('Expected STRING'); return value; };
+  const string = value => { if (value instanceof MemoryString) return value.toString(); if (typeof value !== 'string') fail('Expected STRING'); return value; };
   function builtin(key, a) {
     switch (key) {
-      case 'LENGTH': return string(a[0]).length;
+      case 'LENGTH': return a[0] instanceof MemoryString ? a[0].length : string(a[0]).length;
       case 'LEFT': return string(a[0]).slice(0, integer(a[1]));
       case 'RIGHT': return string(a[0]).slice(-integer(a[1]));
       case 'MID': return string(a[0]).substr(integer(a[1]) - 1, integer(a[2]));
@@ -188,7 +192,7 @@ export function createRuntime(compiled, options = {}) {
   function fileOp(op, a) {
     const filename = show(a[0]);
     if (op === 0) {
-      const mode = a[1];
+      const mode = show(a[1]);
       if (!['READ', 'WRITE', 'APPEND', 'RANDOM'].includes(mode)) fail(`Invalid file mode ${mode}`);
       if (handles.has(filename)) fail(`File ${filename} is already open`);
       if (mode === 'READ' && !Object.hasOwn(files, filename)) fail(`File ${filename} does not exist`);
@@ -224,23 +228,23 @@ export function createRuntime(compiled, options = {}) {
   }
   const env = {
     tick(n) { line = n; if (++steps > maxSteps) fail(`Execution limit (${maxSteps.toLocaleString()} steps) reached`); },
-    num: n => n, str: i => name(i), bool: n => !!n,
+    num: n => n, str: i => stringMemory.literal(i) || text(name(i)), bool: n => !!n,
     get: i => read(cell(name(i))), set: (i, v) => write(cell(name(i)), v),
     declare(i, typeId, value) {
       const key = name(i), scope = scopes.at(-1);
       if (scope.has(key)) fail(`${key} is already declared`);
       const type = parseType(typeId), constant = name(typeId) === '$CONSTANT';
-      if (constant) scope.set(key, { type: null, value: clone(value), constant: true });
+      if (constant) scope.set(key, { type: null, value: clone(text(value)), constant: true });
       else if (Array.isArray(value) && resolveType(type)?.kind === 'set') scope.set(key, { type, value: new Set(value), constant: false });
-      else scope.set(key, { type, value, constant: false });
+      else scope.set(key, { type, value: text(value), constant: false });
     },
     loopVar(i, typeId, value) {
       const key = name(i), scope = scopes.at(-1), type = parseType(typeId);
       if (scope.has(key)) {
         const slot = scope.get(key);
         if (slot.constant) fail(`Cannot reset constant ${key}`);
-        slot.value = clone(value);
-      } else scope.set(key, { type, value: clone(value), constant: false });
+        slot.value = clone(text(value));
+      } else scope.set(key, { type, value: clone(text(value)), constant: false });
     },
     binary, unary(op, value) {
       if (op === 0) { if (typeof value !== 'boolean') fail('NOT needs a BOOLEAN'); return !value; }
@@ -250,7 +254,7 @@ export function createRuntime(compiled, options = {}) {
       fail('Unknown unary operator');
     },
     truth(v) { if (typeof v !== 'boolean') fail('Condition needs a BOOLEAN'); return v ? 1 : 0; },
-    args: () => [], push: (a, v) => { a.push(v); return a; }, builtin: (i, a) => builtin(name(i), a),
+    args: () => [], push: (a, v) => { a.push(v); return a; }, builtin: (i, a) => text(builtin(name(i), a)),
     output: a => { const lineText = a.map(show).join(''); output.push(lineText); options.onOutput?.(lineText); },
     input(ref) {
       if (inputPos >= input.length) {
@@ -264,7 +268,7 @@ export function createRuntime(compiled, options = {}) {
       if (type?.name === 'REAL') value = Number(raw);
       if (type?.name === 'BOOLEAN') value = raw.toUpperCase() === 'TRUE';
       if (type?.name === 'DATE') { const m = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/); value = m ? new Date(Date.UTC(+m[3], +m[2] - 1, +m[1])) : new Date(raw); }
-      write(target, value);
+      write(target, text(value));
     },
     index: (v, a) => read(indexCell(v, a)), setIndex: (v, a, x) => write(indexCell(v, a), x),
     field: (v, i) => read(fieldCell(v, name(i))), setField: (v, i, x) => write(fieldCell(v, name(i)), x),
@@ -278,7 +282,7 @@ export function createRuntime(compiled, options = {}) {
       }
       routine.params.forEach((param, j) => {
         if (param.byref) { if (!a[j] || !a[j].__ref) fail(`${param.name} needs BYREF argument`); scope.set(param.name, a[j].cell); }
-        else { if (!matches(param.type, a[j])) fail(`Invalid argument for ${param.name}`); scope.set(param.name, { type: param.type, value: clone(a[j]), constant: false }); }
+        else { if (!matches(param.type, a[j])) fail(`Invalid argument for ${param.name}`); scope.set(param.name, { type: param.type, value: clone(text(a[j])), constant: false }); }
       });
       scopes.push(scope); frames.push(routine);
     },
@@ -323,8 +327,9 @@ export function createRuntime(compiled, options = {}) {
       try {
         const result = await WebAssembly.instantiate(compiled.binary, { env });
         wasm = result.instance || result;
+        stringMemory = new StringMemory(wasm.exports.memory || new WebAssembly.Memory({ initial: 1 }), compiled.literalStrings || strings, !!wasm.exports.memory);
         wasm.exports.main();
-        return { status: 'completed', output: [...output], files: { ...files }, records: { ...records }, steps, binary: compiled.binary };
+        return { status: 'completed', output: [...output], files: { ...files }, records: stringMemory.plain(records), steps, binary: compiled.binary, memory: stringMemory.memory, stringBytes: stringMemory.top };
       } catch (error) {
         if (error instanceof InputRequired) return { status: 'waiting', output: [...output], files: { ...files }, records: { ...records }, steps, line: error.line, label: error.label, binary: compiled.binary };
         if (error instanceof PseudoError) throw error;

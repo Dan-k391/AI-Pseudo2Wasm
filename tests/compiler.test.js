@@ -17,6 +17,20 @@ OUTPUT NOT FALSE, " ", 3 < 4 AND 4 <> 5
 `), ['5 BCD', 'TRUE TRUE']);
 });
 
+test('strings are UTF-8 in exported linear memory, and long concatenations grow it', async () => {
+  const built = compile('DECLARE S : STRING\nS ← "café" & "!"\nOUTPUT S\n');
+  assert.ok(WebAssembly.Module.exports(new WebAssembly.Module(built.binary)).some(item => item.name === 'memory' && item.kind === 'memory'));
+  assert.ok(Buffer.from(built.binary).includes(Buffer.from('café', 'utf8')));
+  const result = await run('DECLARE S : STRING\nS ← "café" & "!"\nOUTPUT S\n');
+  assert.deepEqual(result.output, ['café!']);
+  const bytes = new Uint8Array(result.memory.buffer, 0, result.stringBytes);
+  assert.ok(Buffer.from(bytes).includes(Buffer.from('café!', 'utf8')));
+  const grown = await run('DECLARE S : STRING\nDECLARE I : INTEGER\nFOR I ← 1 TO 70000\n  S ← S & "x"\nNEXT I\nOUTPUT LENGTH(S)\nOUTPUT S\n', { maxSteps: 500000 });
+  assert.equal(grown.output[0], '70000');
+  assert.equal(grown.output[1].length, 70000);
+  assert.ok(grown.memory.buffer.byteLength > 65536);
+});
+
 test('nested control flow and downward FOR', async () => {
   assert.deepEqual(await output(`
 DECLARE SUM : INTEGER

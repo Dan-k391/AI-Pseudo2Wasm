@@ -1,6 +1,6 @@
 # Self-hosted compiler
 
-`core.pseudo` is the source-to-IR compiler and `assembler.pseudo` is the IR-to-WebAssembly assembler. Both are CAIE pseudocode programs. The assembler embeds the fixed Pseudo2Wasm import ABI header and emits the complete `.wasm` binary, including function, export, and code sections.
+`core.pseudo` is the source-to-IR compiler and `assembler.pseudo` is the IR-to-WebAssembly assembler. Both are CAIE pseudocode programs. The assembler embeds the fixed Pseudo2Wasm import ABI header and emits the complete `.wasm` binary, including function, memory, export, and code sections.
 
 `npm run bootstrap` uses the JavaScript compiler only as the initial seed. It then uses the seed-built WebAssembly compiler and assembler to build both pseudocode sources. Those results rebuild both sources once more. The build fails unless the two self-hosted stages have identical WebAssembly bytes and string tables. The resulting `bootstrap/build/core.wasm` and `assembler.wasm` are the compiler used by the CLI and browser IDE. Neither production path calls the JavaScript parser or code generator to build a program.
 
@@ -15,7 +15,7 @@ npm run build
 npm run serve
 ```
 
-The compile command writes a `.wasm` and matching `.meta.json` file. The metadata carries types, classes, routines, and the host string table. Generated modules import the Pseudo2Wasm `env` ABI and need `src/runtime.js` to run. They are not WASI programs. Strings, arrays, records, files, and objects remain host-managed values; the compiler itself uses the same ABI when it runs as WebAssembly.
+The compile command writes a `.wasm` and matching `.meta.json` file. The metadata carries types, classes, routines, and the literal string table. Generated modules import the Pseudo2Wasm `env` ABI and need `src/runtime.js` to run. They are not WASI programs. Each module exports linear memory and embeds its literal strings in a data segment as length-prefixed UTF-8. Dynamic strings use the same memory heap; concatenation uses a lazy rope and materializes bytes when needed, avoiding repeated copies. A small JavaScript descriptor crosses the existing `externref` ABI, and decoded text may be cached for host operations. WASM's operand and call stacks handle expressions and routines. Arrays, records, files, and objects still use host values.
 
 ## Implemented language
 

@@ -45,6 +45,16 @@ OUTPUT TEXT & "!"
   assert.deepEqual(result.output, ['0', '1', 'two', '3', 'start!']);
 });
 
+test('self-hosted output stores dynamic strings in exported memory', async () => {
+  const core = await bootstrapped;
+  const built = await compileSelfHosted('DECLARE S : STRING\nS ← "café" & " 😀"\nOUTPUT S\n', core);
+  assert.ok(WebAssembly.Module.exports(new WebAssembly.Module(built.binary)).some(item => item.name === 'memory' && item.kind === 'memory'));
+  assert.ok(Buffer.from(built.binary).includes(Buffer.from('café', 'utf8')));
+  const result = await createRuntime(built).run();
+  assert.deepEqual(result.output, ['café 😀']);
+  assert.ok(Buffer.from(new Uint8Array(result.memory.buffer, 0, result.stringBytes)).includes(Buffer.from('café 😀')));
+});
+
 test('the self-hosted compiler accepts INPUT and rejects unsupported statements', async () => {
   const core = await bootstrapped;
   const built = await compileSelfHosted('DECLARE NAME : STRING\nINPUT NAME\nOUTPUT "Hello " & NAME\n', core);

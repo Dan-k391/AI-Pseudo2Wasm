@@ -4,6 +4,7 @@ import { advancedExamples } from './examples.js';
 import { compileSelfHostedInBrowser } from './selfhost.js';
 import { completions, diagnosticRange } from './editor-intelligence.js';
 import { selectExplorerFiles, moveExplorerFiles } from './explorer-selection.js';
+import { findMatches, replaceMatches } from './editor-search.js';
 
 const $ = id => document.getElementById(id);
 const app = document.querySelector('.app');
@@ -57,17 +58,25 @@ const escape = value => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').repla
 const tokenPattern = /\/\/[^\n]*|"(?:""|\\.|[^"])*"|'(?:''|\\.|[^'])*'|\b(?:DECLARE|CONSTANT|TYPE|ENDTYPE|DEFINE|CLASS|ENDCLASS|PUBLIC|PRIVATE|INHERITS|FUNCTION|ENDFUNCTION|PROCEDURE|ENDPROCEDURE|RETURNS|RETURN|BYREF|BYVAL|CALL|NEW|SUPER|OUTPUT|INPUT|OPENFILE|CLOSEFILE|READFILE|WRITEFILE|GETRECORD|PUTRECORD|SEEK|FOR|TO|STEP|NEXT|WHILE|ENDWHILE|REPEAT|UNTIL|IF|THEN|ELSE|ENDIF|CASE|OF|OTHERWISE|ENDCASE|AND|OR|NOT|IN|DIV|MOD|TRUE|FALSE|NULL|INTEGER|REAL|BOOLEAN|CHAR|STRING|DATE|ARRAY|SET|READ|WRITE|APPEND|RANDOM)\b|\b\d+(?:\.\d+)?\b|[←&<>+=*/^-]/gi;
 const flow = new Set(['IF','THEN','ELSE','ENDIF','CASE','OF','OTHERWISE','ENDCASE','FOR','TO','STEP','NEXT','WHILE','ENDWHILE','REPEAT','UNTIL','FUNCTION','ENDFUNCTION','PROCEDURE','ENDPROCEDURE','RETURN','CALL','CLASS','ENDCLASS']);
 const types = new Set(['INTEGER','REAL','BOOLEAN','CHAR','STRING','DATE','ARRAY','SET']);
-function colorize(source, issues = []) {
+function colorize(source, issues = [], matches = [], current = -1) {
   const ranges = issues.map(issue => diagnosticRange(source, issue)).filter(Boolean);
-  let last = 0, html = '';
+  let last = 0, html = '', matchCursor = 0;
   const segment = (value, offset, cls = '') => {
     const cuts = [0, value.length];
     for (const [start, end] of ranges) { if (start > offset && start < offset + value.length) cuts.push(start - offset); if (end > offset && end < offset + value.length) cuts.push(end - offset); }
+    while (matches[matchCursor]?.end <= offset) matchCursor++;
+    for (let j = matchCursor; j < matches.length && matches[j].start < offset + value.length; j++) {
+      const match = matches[j];
+      if (match.start > offset) cuts.push(match.start - offset);
+      if (match.end < offset + value.length) cuts.push(match.end - offset);
+    }
     cuts.sort((a, b) => a - b);
     for (let i = 0; i < cuts.length - 1; i++) {
       const a = cuts[i], b = cuts[i + 1]; if (a === b) continue;
       const error = ranges.some(([start, end]) => offset + a >= start && offset + a < end);
-      const classes = [cls, error ? 'editor-error-underline' : ''].filter(Boolean).join(' ');
+      while (matches[matchCursor]?.end <= offset + a) matchCursor++;
+      const matchIndex = matches[matchCursor]?.start <= offset + a ? matchCursor : -1;
+      const classes = [cls, error ? 'editor-error-underline' : '', matchIndex < 0 ? '' : matchIndex === current ? 'search-current' : 'search-match'].filter(Boolean).join(' ');
       html += classes ? `<span class="${classes}">${escape(value.slice(a, b))}</span>` : escape(value.slice(a, b));
     }
   };
@@ -307,7 +316,9 @@ function renderCode(which) {
   const source = project.sourceFiles[name] ?? '';
   if (pane.editor.value !== source) pane.editor.value = source;
   const errors = problemsByFile[name] || [];
-  pane.highlight.innerHTML = colorize(source, errors);
+  const searchState = pane.searchState;
+  if (searchState && !pane.search.hidden) updateSearch(which, false);
+  pane.highlight.innerHTML = colorize(source, errors, searchState && !pane.search.hidden ? searchState.matches : [], searchState?.current ?? -1);
   pane.gutter.innerHTML = Array.from({ length: source.split('\n').length }, (_, i) => `<div class="${errors.some(p => p.line === i + 1) ? 'error-line' : ''}">${i + 1}</div>`).join('');
   pane.highlight.scrollTop = pane.editor.scrollTop; pane.highlight.scrollLeft = pane.editor.scrollLeft; pane.gutter.scrollTop = pane.editor.scrollTop;
 }
@@ -691,17 +702,56 @@ function moveLine(which, direction) {
   editor.dispatchEvent(new Event('input', { bubbles: true }));
 }
 function showSearch(which, replace = false) {
-  const pane = panes[which]; pane.search.hidden = false; pane.search.classList.toggle('with-replace', replace);
+  const pane = panes[which]; pane.search.hidden = false;
+  if (replace) pane.search.classList.add('with-replace');
   const selection = pane.editor.value.slice(pane.editor.selectionStart, pane.editor.selectionEnd);
   if (selection && !selection.includes('\n')) pane.searchInput.value = selection;
+  updateSearch(which);
   pane.searchInput.focus(); pane.searchInput.select();
 }
+function updateSearch(which, render = true) {
+  const pane = panes[which], state = pane.searchState;
+  const found = findMatches(pane.editor.value, pane.searchInput.value, state);
+  state.matches = found.matches; state.error = found.error;
+  const start = pane.editor.selectionStart, end = pane.editor.selectionEnd;
+  const selected = state.matches.findIndex(match => match.start === start && match.end === end);
+  state.current = selected >= 0 ? selected : state.matches.findIndex(match => match.start >= start);
+  if (state.current < 0 && state.matches.length) state.current = 0;
+  pane.searchInput.classList.toggle('invalid', !!found.error);
+  pane.searchInput.title = found.error || '';
+  const count = $(`${which}-search-count`);
+  count.textContent = found.error ? 'Invalid pattern' : !pane.searchInput.value ? 'No results' : state.matches.length ? `${state.current + 1} of ${state.matches.length}` : 'No results';
+  for (const button of pane.search.querySelectorAll('[data-search-action="next"], [data-search-action="previous"], [data-search-action="replace"], [data-search-action="all"]')) button.disabled = !state.matches.length;
+  if (render) renderCode(which);
+}
 function findNext(which, backwards = false, focus = true) {
-  const pane = panes[which], query = pane.searchInput.value; if (!query) return;
-  const source = pane.editor.value.toLowerCase(), target = query.toLowerCase();
-  let index = backwards ? source.lastIndexOf(target, pane.editor.selectionStart - 1) : source.indexOf(target, pane.editor.selectionEnd);
-  if (index < 0) index = backwards ? source.lastIndexOf(target) : source.indexOf(target);
-  if (index >= 0) { if (focus) pane.editor.focus(); pane.editor.setSelectionRange(index, index + query.length); updateStatus(); }
+  const pane = panes[which], state = pane.searchState;
+  if (!state.matches.length) return;
+  state.current = (state.current + (backwards ? -1 : 1) + state.matches.length) % state.matches.length;
+  const match = state.matches[state.current];
+  if (focus) pane.editor.focus();
+  pane.editor.setSelectionRange(match.start, match.end);
+  $(`${which}-search-count`).textContent = `${state.current + 1} of ${state.matches.length}`;
+  renderCode(which); updateStatus();
+}
+function replaceSearch(which, all = false) {
+  const pane = panes[which], state = pane.searchState;
+  if (!state.matches.length) return;
+  const result = replaceMatches(pane.editor.value, state.matches, pane.replaceInput.value, { regex: state.regex, all, current: state.current });
+  if (!result.count) return;
+  pane.suppressCompletion = true;
+  pane.editor.setRangeText(result.source, 0, pane.editor.value.length, 'end');
+  pane.editor.setSelectionRange(result.cursor, result.cursor);
+  pane.editor.dispatchEvent(new Event('input', { bubbles: true }));
+  updateSearch(which);
+  if (!all && state.matches.length) {
+    const next = state.matches.findIndex(match => match.start >= result.cursor);
+    state.current = next < 0 ? 0 : next;
+    const match = state.matches[state.current];
+    pane.editor.setSelectionRange(match.start, match.end);
+    renderCode(which);
+  }
+  pane.replaceInput.focus();
 }
 function quickOpen() {
   const overlay = $('quick-open'), input = $('quick-open-input'); overlay.hidden = false; input.value = ''; renderQuickOpen(); input.focus();
@@ -716,6 +766,7 @@ function renderQuickOpen() {
 
 for (const which of ['primary', 'secondary']) {
   const pane = panes[which], empty = document.createElement('div'); empty.className = 'editor-empty'; empty.textContent = 'Open a pseudocode file from Explorer'; pane.group.append(empty);
+  pane.searchState = { caseSensitive: false, wholeWord: false, regex: false, matches: [], current: -1, error: '' };
   pane.editor.addEventListener('focus', () => setActivePane(which));
   pane.editor.addEventListener('click', () => { hideCompletions(which); updateStatus(); }); pane.editor.addEventListener('keyup', updateStatus);
   pane.editor.addEventListener('blur', event => { if (!pane.completion.contains(event.relatedTarget)) hideCompletions(which); });
@@ -740,18 +791,17 @@ for (const which of ['primary', 'secondary']) {
     if (event.key === 'Tab' && !event.ctrlKey && !event.metaKey) { event.preventDefault(); hideCompletions(which); if (event.shiftKey) editLines(which, 'outdent'); else if (pane.editor.value.slice(pane.editor.selectionStart, pane.editor.selectionEnd).includes('\n')) editLines(which, 'indent'); else { pane.editor.setRangeText('  ', pane.editor.selectionStart, pane.editor.selectionEnd, 'end'); pane.editor.dispatchEvent(new Event('input')); } return; }
     if (event.key === 'Enter') { const before = pane.editor.value.slice(0, pane.editor.selectionStart), indent = before.slice(before.lastIndexOf('\n') + 1).match(/^\s*/)[0]; if (indent) { event.preventDefault(); pane.editor.setRangeText('\n' + indent, pane.editor.selectionStart, pane.editor.selectionEnd, 'end'); pane.editor.dispatchEvent(new Event('input')); } }
   });
-  pane.searchInput.addEventListener('input', () => findNext(which, false, false));
-  pane.searchInput.addEventListener('keydown', event => { if (event.key === 'Escape') { pane.search.hidden = true; pane.editor.focus(); } else if (event.key === 'Enter') { event.preventDefault(); findNext(which, event.shiftKey); } });
+  pane.searchInput.addEventListener('input', () => updateSearch(which));
+  pane.searchInput.addEventListener('keydown', event => { if (event.key === 'Escape') { pane.search.hidden = true; renderCode(which); pane.editor.focus(); } else if (event.key === 'Enter') { event.preventDefault(); findNext(which, event.shiftKey); } });
   pane.replaceInput.addEventListener('keydown', event => { if (event.key === 'Escape') { pane.search.hidden = true; pane.editor.focus(); } else if (event.key === 'Enter') { event.preventDefault(); pane.search.querySelector('[data-search-action="replace"]').click(); } });
   pane.search.addEventListener('click', event => {
+    const option = event.target.closest('[data-search-option]')?.dataset.searchOption;
+    if (option) { pane.searchState[option] = !pane.searchState[option]; pane.search.querySelector(`[data-search-option="${option}"]`).setAttribute('aria-pressed', String(pane.searchState[option])); updateSearch(which); pane.searchInput.focus(); return; }
     const action = event.target.closest('[data-search-action]')?.dataset.searchAction; if (!action) return;
-    if (action === 'close') { pane.search.hidden = true; pane.editor.focus(); }
+    if (action === 'close') { pane.search.hidden = true; renderCode(which); pane.editor.focus(); }
+    else if (action === 'toggle-replace') { pane.search.classList.toggle('with-replace'); (pane.search.classList.contains('with-replace') ? pane.replaceInput : pane.searchInput).focus(); }
     else if (action === 'next' || action === 'previous') findNext(which, action === 'previous');
-    else {
-      const query = pane.searchInput.value; if (!query) return;
-      if (action === 'all') { pane.editor.value = pane.editor.value.replaceAll(new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), pane.replaceInput.value); pane.editor.dispatchEvent(new Event('input')); }
-      else { const selection = pane.editor.value.slice(pane.editor.selectionStart, pane.editor.selectionEnd); if (selection.toLowerCase() !== query.toLowerCase()) findNext(which); else { pane.editor.setRangeText(pane.replaceInput.value, pane.editor.selectionStart, pane.editor.selectionEnd, 'end'); pane.editor.dispatchEvent(new Event('input')); findNext(which); } }
-    }
+    else replaceSearch(which, action === 'all');
   });
 }
 $('example-count').textContent = String(examples.length).padStart(2, '0');

@@ -43,7 +43,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url).toLowerCase() === resolve(
       await writeFile(outputPath, result.binary);
       const extension = extname(outputPath);
       const metadataPath = extension ? outputPath.slice(0, -extension.length) + '.meta.json' : outputPath + '.meta.json';
-      await writeFile(metadataPath, JSON.stringify({ strings: result.strings, types: result.types, classes: result.classes, routines: result.routines }, null, 2));
+      await writeFile(metadataPath, JSON.stringify({ strings: result.strings, literalStrings: result.literalStrings, types: result.types, classes: result.classes, routines: result.routines }, null, 2));
       console.log(`Compiled ${inputPath} with self-hosted core → ${outputPath} (${result.binary.length} bytes)`);
     } catch (error) {
       console.error(error.message);
