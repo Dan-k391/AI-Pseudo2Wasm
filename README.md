@@ -1,6 +1,6 @@
 # Pseudo2Wasm
 
-A dependency-free compiler and browser IDE for Cambridge International AS & A Level Computer Science (9618) pseudocode. The browser compiles source with three native WebAssembly compiler stages written in pseudocode. Those stages compile and rebuild themselves. Eligible programs use native WASM lowering: scalar variables, arrays, records, arithmetic, control flow, routine frames, and `BYREF` addresses run in WASM memory. Strings are memory-backed too; concatenation and equality execute in WASM. JavaScript handles input/output, Unicode text operations, and selected built-ins. Other language features continue through the self-hosted compatibility backend.
+A dependency-free compiler and browser IDE for Cambridge International AS & A Level Computer Science (9618) pseudocode. The browser compiles source with three native WebAssembly compiler stages written in pseudocode. Those stages compile and rebuild themselves. Eligible programs use native WASM lowering: numeric routine locals and parameters use WASM locals when safe, while arrays, records, address-taken values, and `BYREF` addresses use WASM memory. Strings are memory-backed too; concatenation and equality execute in WASM. JavaScript handles input/output, Unicode text operations, and selected built-ins. Other language features continue through the self-hosted compatibility backend.
 
 ## Run locally
 

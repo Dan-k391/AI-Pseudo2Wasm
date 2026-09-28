@@ -46,6 +46,78 @@ test('release native modules omit step checks while IDE builds stay guarded', as
   await assert.rejects(createRuntime(invalid).run(), error => error.line === 2 && /bounds/.test(error.message));
 });
 
+test('release routines keep numeric parameters and locals correct across recursion and repeated calls', async () => {
+  const source = `FUNCTION SumTo(N : INTEGER) RETURNS INTEGER
+  DECLARE Total : INTEGER
+  DECLARE I : INTEGER
+  FOR I ← 1 TO N
+    Total ← Total + I
+  NEXT I
+  RETURN Total
+ENDFUNCTION
+FUNCTION Fib(N : INTEGER) RETURNS INTEGER
+  IF N <= 1 THEN
+    RETURN N
+  ENDIF
+  RETURN Fib(N - 1) + Fib(N - 2)
+ENDFUNCTION
+OUTPUT SumTo(10), " ", SumTo(3), " ", Fib(10)
+`;
+  const guarded = await compileSelfHosted(source, compiler);
+  const release = await compileSelfHosted(source, compiler, { release: true });
+  assert.equal(release.nativeBackend, 'selfhosted');
+  assert.ok(WebAssembly.validate(release.binary));
+  assert.ok(release.binary.length < guarded.binary.length);
+  assert.deepEqual((await createRuntime(release).run()).output, ['55 6 55']);
+});
+
+test('release routines preserve string frames and BYREF memory addresses', async () => {
+  const stringSource = `FUNCTION Labelled(N : INTEGER, Prefix : STRING) RETURNS STRING
+  DECLARE ResultValue : INTEGER
+  ResultValue ← N + 1
+  RETURN Prefix & NUM_TO_STR(ResultValue)
+ENDFUNCTION
+OUTPUT Labelled(4, "N=")
+`;
+  const stringBuilt = await compileSelfHosted(stringSource, compiler, { release: true });
+  assert.equal(stringBuilt.nativeBackend, 'selfhosted');
+  assert.deepEqual((await createRuntime(stringBuilt).run()).output, ['N=5']);
+
+  const byrefSource = `PROCEDURE AddOne(BYREF N : INTEGER)
+  N ← N + 1
+ENDPROCEDURE
+DECLARE Values : ARRAY[1:2] OF INTEGER
+Values[2] ← 7
+CALL AddOne(Values[2])
+OUTPUT Values[2]
+`;
+  const byrefBuilt = await compileSelfHosted(byrefSource, compiler, { release: true });
+  assert.equal(byrefBuilt.nativeBackend, 'selfhosted');
+  assert.deepEqual((await createRuntime(byrefBuilt).run()).output, ['8']);
+});
+
+test('release FOR loops preserve descending steps and reject dynamic zero steps', async () => {
+  const descending = `DECLARE Total : INTEGER
+DECLARE I : INTEGER
+FOR I ← 5 TO 1 STEP -1
+  Total ← Total + I
+NEXT I
+OUTPUT Total
+`;
+  const built = await compileSelfHosted(descending, compiler, { release: true });
+  assert.equal(built.nativeBackend, 'selfhosted');
+  assert.deepEqual((await createRuntime(built).run()).output, ['15']);
+
+  const zeroStep = `DECLARE StepValue : INTEGER
+DECLARE I : INTEGER
+FOR I ← 1 TO 3 STEP StepValue
+  OUTPUT I
+NEXT I
+`;
+  const invalid = await compileSelfHosted(zeroStep, compiler, { release: true });
+  await assert.rejects(createRuntime(invalid).run(), /FOR STEP must be a nonzero number/);
+});
+
 test('self-hosted native peephole removes multiplication by one', async () => {
   const prefix = 'DECLARE X : INTEGER\nX ← 7\n';
   const direct = await compileSelfHosted(prefix + 'X ← X\nOUTPUT X\n', compiler);
@@ -180,10 +252,13 @@ test('the packaged self-hosted compiler selects native WASM for the complex exam
 test('native and compatibility paths agree on all complex example output', async () => {
   for (const example of advancedExamples) {
     const compatible = compile(example.code), native = await compileSelfHosted(example.code, compiler);
+    const release = await compileSelfHosted(example.code, compiler, { release: true });
     const options = { maxSteps: 500000, seed: 12345, inputLines: example.name === 'ASCII Minesweeper' ? ['F', '1', '1', 'Q'] : [] };
     const baseline = await createRuntime(compatible, options).run();
     const lowered = await createRuntime(native, options).run();
+    const optimized = await createRuntime(release, options).run();
     assert.deepEqual(lowered.output, baseline.output, example.name);
+    assert.deepEqual(optimized.output, baseline.output, `${example.name} release`);
   }
 });
 
