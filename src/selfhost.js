@@ -145,6 +145,14 @@ export async function compileSelfHostedSource(source, core, assembler, nativeLow
     maxSteps: 20000000,
   }).run();
   if (result.status !== 'completed') throw new Error(`Compiler stopped with status ${result.status}`);
+  const sourceError = result.output.find(line => line.startsWith('ERROR:'));
+  if (sourceError) {
+    const separator = sourceError.indexOf(':', 6);
+    const line = Number(sourceError.slice(6, separator)) || 1;
+    const sourceLine = source.replace(/\r\n/g, '\n').split('\n')[line - 1] || '';
+    const first = sourceLine.search(/\S/);
+    throw new PseudoError(`Unsupported self-hosted source line: ${sourceError.slice(separator + 1)}`, line, first < 0 ? 1 : first + 1);
+  }
   const metadata = decodeSelfHostedMetadata(result.output);
   if (nativeLowerer) {
     const native = await lowerSelfHostedNative(result.output, nativeLowerer);

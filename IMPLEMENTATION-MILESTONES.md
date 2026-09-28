@@ -33,6 +33,11 @@ existing editor underlines, tooltip, and Problems panel in sync.
 **Gate:** Tests prove invalid source gives the same error in diagnostics and
 Compile, and late results cannot overwrite newer edits.
 
+Live validation now runs the packaged compiler stages in a Web Worker. If
+workers are unavailable, the editor uses the same compiler on the main thread.
+The latest source snapshot for each file owns its result, and source errors
+retain line and column information for the Problems panel and editor tooltip.
+
 ## 3. Self-hosted optimization and release mode
 
 **Prompt:** Optimize emitted native WASM inside `bootstrap/native.pseudo`,

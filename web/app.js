@@ -1,7 +1,7 @@
-import { parse } from './src/parser.js';
 import { createRuntime } from './src/runtime.js';
 import { advancedExamples } from './examples.js';
 import { compileSelfHostedInBrowser } from './selfhost.js';
+import { createDiagnosticCoordinator, diagnosticFromError } from './compiler-diagnostics.js';
 import { completions, diagnosticRange } from './editor-intelligence.js';
 import { selectExplorerFiles, moveExplorerFiles } from './explorer-selection.js';
 import { findMatches, replaceMatches } from './editor-search.js';
@@ -546,6 +546,7 @@ function renameSource(old = activeName()) {
       selectedFiles = selectedFiles.map(k => k === old ? name : k); if (selectionAnchor === old) selectionAnchor = name;
       for (const state of Object.values(project.panes)) { state.tabs = state.tabs.map(k => k === old ? name : k); if (state.active === old) state.active = name; }
       if (problemsByFile[old]) { problemsByFile[name] = problemsByFile[old]; delete problemsByFile[old]; }
+      diagnosticCoordinator.forget(old);
       editHistory.rename(old, name); navigationIndexes.delete(old);
       if (referenceQuery?.file === old) referenceQuery.file = name;
       if (builtFile === old) builtFile = name;
@@ -555,7 +556,7 @@ function renameSource(old = activeName()) {
 function removeSources(names) {
   const removing = new Set(names.filter(name => Object.hasOwn(project.sourceFiles, name)));
   if (!removing.size) return;
-  for (const name of removing) { delete project.sourceFiles[name]; delete problemsByFile[name]; editHistory.delete(name); navigationIndexes.delete(name); }
+  for (const name of removing) { delete project.sourceFiles[name]; delete problemsByFile[name]; diagnosticCoordinator.forget(name); editHistory.delete(name); navigationIndexes.delete(name); }
   if (removing.has(referenceQuery?.file)) referenceQuery = null;
   project.fileOrder = project.fileOrder.filter(name => !removing.has(name));
   selectedFiles = selectedFiles.filter(name => !removing.has(name));
@@ -588,10 +589,25 @@ function setProblems(name, items) {
   }
   updateStatus(); if (activeConsole === 'diagnostics') renderConsole();
 }
+const diagnosticCoordinator = createDiagnosticCoordinator(setProblems);
+let diagnosticWorker;
+try {
+  diagnosticWorker = new Worker(new URL('./diagnostics-worker.js', import.meta.url), { type: 'module' });
+  diagnosticWorker.onmessage = ({ data }) => diagnosticCoordinator.receive(data);
+  diagnosticWorker.onerror = () => {
+    diagnosticWorker.terminate();
+    diagnosticWorker = null;
+    for (const { name } of diagnosticCoordinator.outstanding()) diagnose(name);
+  };
+} catch { diagnosticWorker = null; }
 function diagnose(name) {
-  if (!name) return;
-  try { parse(project.sourceFiles[name]); setProblems(name, []); }
-  catch (error) { setProblems(name, [{ line: error.line || 1, column: error.column || 1, message: error.message }]); }
+  if (!name || !Object.hasOwn(project.sourceFiles, name)) return;
+  const request = diagnosticCoordinator.request(name, project.sourceFiles[name]);
+  if (diagnosticWorker) { diagnosticWorker.postMessage(request); return; }
+  compileSelfHostedInBrowser(request.source).then(
+    () => diagnosticCoordinator.receive({ ...request, issue: null }),
+    error => diagnosticCoordinator.receive({ ...request, issue: diagnosticFromError(error, request.source) }),
+  );
 }
 function log(text, kind = 'line') { consoleLines.push({ text, kind }); $('output-count').textContent = consoleLines.filter(x => x.kind === 'line').length; if (activeConsole === 'output') renderConsole(); }
 function renderConsole() {
@@ -849,7 +865,7 @@ async function build() {
   } catch (error) {
     lastCompiled = null; builtFile = null; builtSource = null; buildInfo = null;
     $('build-status').textContent = `${name} · failed`; $('build-size').textContent = `Line ${error.line || 1}`;
-    setProblems(name, [{ line: error.line || 1, column: error.column || 1, message: error.message }]); switchConsole('diagnostics'); return null;
+    setProblems(name, [diagnosticFromError(error, source)]); switchConsole('diagnostics'); return null;
   }
 }
 async function runProgram() {
@@ -1063,6 +1079,7 @@ for (const which of ['primary', 'secondary']) {
     pane.applyingHistory = false; pane.beforeEdit = null;
     if (waitingInput?.session.filename === name) { runToken++; waitingInput = null; log('Run cancelled after source edit.', 'meta'); }
     project.sourceFiles[name] = next; if (builtFile === name) { lastCompiled = null; builtSource = null; }
+    diagnosticCoordinator.forget(name); problemsByFile[name] = [];
     hideDiagnostic(which);
     hideReferencePeek(which); pane.navHover = null; pane.editor.classList.remove('navigation-ready');
     renderCode(which); renderCode(which === 'primary' ? 'secondary' : 'primary'); updateStatus(); scheduleSave();
