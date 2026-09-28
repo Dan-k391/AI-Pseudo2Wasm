@@ -71,7 +71,7 @@ test('the self-hosted compiler accepts INPUT and rejects unsupported statements'
   const result = await createRuntime(built, { inputLines: ['Ada'] }).run();
   assert.deepEqual(result.output, ['Hello Ada']);
   await assert.rejects(compileSelfHosted('OUTPUT "before"\nBOGUS\n', core), error => {
-    assert.match(error.message, /Unsupported self-hosted source line/);
+    assert.match(error.message, /Unrecognized or unsupported statement/);
     assert.equal(error.line, 2);
     return true;
   });

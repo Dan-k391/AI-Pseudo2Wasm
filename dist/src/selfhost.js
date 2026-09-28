@@ -145,13 +145,24 @@ export async function compileSelfHostedSource(source, core, assembler, nativeLow
     maxSteps: 20000000,
   }).run();
   if (result.status !== 'completed') throw new Error(`Compiler stopped with status ${result.status}`);
-  const sourceError = result.output.find(line => line.startsWith('ERROR:'));
-  if (sourceError) {
-    const separator = sourceError.indexOf(':', 6);
-    const line = Number(sourceError.slice(6, separator)) || 1;
-    const sourceLine = source.replace(/\r\n/g, '\n').split('\n')[line - 1] || '';
-    const first = sourceLine.search(/\S/);
-    throw new PseudoError(`Unsupported self-hosted source line: ${sourceError.slice(separator + 1)}`, line, first < 0 ? 1 : first + 1);
+  const sourceLines = source.replace(/\r\n/g, '\n').split('\n');
+  const diagnostics = result.output.filter(line => line.startsWith('ERROR:')).map(record => {
+    const separator = record.indexOf(':', 6);
+    const line = Math.max(1, Number(record.slice(6, separator)) || 1);
+    const statement = record.slice(separator + 1);
+    const original = sourceLines[line - 1] || '';
+    const match = original.toUpperCase().indexOf(statement.toUpperCase());
+    const first = original.search(/\S/);
+    const column = match >= 0 ? match + 1 : first < 0 ? 1 : first + 1;
+    const message = /^(?:ENDCASE|ENDTYPE|NEXT\b)/i.test(statement)
+      ? `Unexpected ${statement}` : `Unrecognized or unsupported statement: ${statement}`;
+    return { line, column, message };
+  });
+  if (diagnostics.length) {
+    const first = diagnostics[0];
+    const error = new PseudoError(first.message, first.line, first.column);
+    error.diagnostics = diagnostics;
+    throw error;
   }
   const metadata = decodeSelfHostedMetadata(result.output);
   if (nativeLowerer) {

@@ -81,3 +81,11 @@ export function diagnosticRange(source, issue) {
   const token = /^[\w]+|^\S/.exec(text.slice(start));
   return [base + start, base + start + (token?.[0].length || 1)];
 }
+
+export function diagnosticAtOffset(source, issues, offset) {
+  for (const issue of issues) {
+    const range = diagnosticRange(source, issue);
+    if (range && offset >= range[0] && offset < range[1]) return issue;
+  }
+  return null;
+}

@@ -16,6 +16,7 @@ const tsFile = join(work, 'kernels.ts');
 const cWasm = join(work, 'emscripten-kernels.wasm');
 const tsWasm = join(work, 'assemblyscript-kernels.wasm');
 const pseudoWasm = join(work, 'pseudo-kernels.wasm');
+const pseudoReleaseWasm = join(work, 'pseudo-release-kernels.wasm');
 
 const pseudoSource = `FUNCTION Sum(N : INTEGER) RETURNS REAL
   DECLARE Total : REAL
@@ -82,24 +83,33 @@ async function main() {
   const cArgs = ['-O3', '-sSTANDALONE_WASM=1', '-Wl,--no-entry', '-Wl,--export=sum', '-Wl,--export=fib', cFile, '-o', cWasm];
   const tsArgs = [tsFile, '--outFile', tsWasm, '-Ospeed', '--runtime', 'stub'];
   const pseudoArgs = [join(root, 'bootstrap', 'compile.js'), pseudoFile, pseudoWasm];
+  const pseudoReleaseArgs = [join(root, 'bootstrap', 'compile.js'), pseudoFile, pseudoReleaseWasm, '--release'];
 
   // One warm build, then median build time. Pseudo also reports its in-process API.
   run(emcc, cArgs);
   run(process.execPath, [asc, ...tsArgs]);
   run(process.execPath, pseudoArgs);
-  const build = { Emscripten: [], AssemblyScript: [], PseudoCLI: [], PseudoAPI: [] };
+  run(process.execPath, pseudoReleaseArgs);
+  const build = { Emscripten: [], AssemblyScript: [], PseudoCLI: [], PseudoReleaseCLI: [], PseudoAPI: [], PseudoReleaseAPI: [] };
   for (let i = 0; i < 5; i++) {
     build.Emscripten.push(run(emcc, cArgs));
     build.AssemblyScript.push(run(process.execPath, [asc, ...tsArgs]));
     build.PseudoCLI.push(run(process.execPath, pseudoArgs));
+    build.PseudoReleaseCLI.push(run(process.execPath, pseudoReleaseArgs));
     const t = performance.now();
     await compileSelfHosted(pseudoSource, compiler);
     build.PseudoAPI.push(performance.now() - t);
+    const releaseStart = performance.now();
+    await compileSelfHosted(pseudoSource, compiler, { release: true });
+    build.PseudoReleaseAPI.push(performance.now() - releaseStart);
   }
   const pseudo = await compileSelfHosted(pseudoSource, compiler);
+  const pseudoRelease = await compileSelfHosted(pseudoSource, compiler, { release: true });
   if (!pseudo.native || pseudo.nativeBackend !== 'selfhosted') throw new Error('Pseudo program did not use self-hosted native WASM');
+  if (!pseudoRelease.native || !pseudoRelease.release || pseudoRelease.nativeBackend !== 'selfhosted') throw new Error('Pseudo release program did not use self-hosted native WASM');
   const binaries = {
-    Pseudo2Wasm: pseudo.binary,
+    PseudoGuarded: pseudo.binary,
+    PseudoRelease: pseudoRelease.binary,
     Emscripten: await readFile(cWasm),
     AssemblyScript: await readFile(tsWasm),
   };
@@ -115,7 +125,7 @@ async function main() {
         : () => 0;
     }
     const instance = new WebAssembly.Instance(module, { env });
-    if (name === 'Pseudo2Wasm') instance.exports.main();
+    if (name.startsWith('Pseudo')) instance.exports.main();
     instances[name] = instance;
   }
   const kernels = [
@@ -126,7 +136,7 @@ async function main() {
   for (const kernel of kernels) {
     runtime[kernel.name] = {};
     for (const [name, instance] of Object.entries(instances)) {
-      const fn = instance.exports[name === 'Pseudo2Wasm' ? kernel.name.toUpperCase() : kernel.name];
+      const fn = instance.exports[name.startsWith('Pseudo') ? kernel.name.toUpperCase() : kernel.name];
       if (typeof fn !== 'function') throw new Error(`${name} did not export ${kernel.name}`);
       const times = [];
       for (let i = 0; i < 12; i++) {

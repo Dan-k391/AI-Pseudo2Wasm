@@ -9,6 +9,17 @@ export function diagnosticFromError(error, source) {
   };
 }
 
+export function diagnosticsFromError(error, source) {
+  const reports = Array.isArray(error?.diagnostics) && error.diagnostics.length ? error.diagnostics : [error];
+  const seen = new Set();
+  return reports.map(report => diagnosticFromError(report, source)).filter(issue => {
+    const key = `${issue.line}:${issue.column}:${issue.message}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 // A response is valid only for the exact snapshot most recently requested for
 // that file. Different files may be diagnosed concurrently.
 export function createDiagnosticCoordinator(publish) {
@@ -20,11 +31,11 @@ export function createDiagnosticCoordinator(publish) {
       pending.set(name, { id, source });
       return { id, name, source };
     },
-    receive({ id, name, source, issue }) {
+    receive({ id, name, source, issues, issue }) {
       const current = pending.get(name);
       if (!current || current.id !== id || current.source !== source) return false;
       pending.delete(name);
-      publish(name, issue ? [issue] : []);
+      publish(name, issues || (issue ? [issue] : []));
       return true;
     },
     outstanding() { return [...pending.entries()].map(([name, request]) => ({ name, ...request })); },

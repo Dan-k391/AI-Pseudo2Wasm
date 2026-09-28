@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { completions, diagnosticRange } from '../web/editor-intelligence.js';
+import { completions, diagnosticRange, diagnosticAtOffset } from '../web/editor-intelligence.js';
 
 test('completion offers keywords, builtins, and declarations', () => {
   const source = 'DECLARE Counter : INTEGER\nOUTPUT Cou';
@@ -35,4 +35,14 @@ test('error range selects the token at the parser location', () => {
   const range = diagnosticRange(source, { line: 2, column: 8 });
   assert.equal(source.slice(...range), '@');
   assert.equal(diagnosticRange(source, { line: 9, column: 1 }), null);
+});
+
+test('diagnostic hover belongs to the underlined token, not its entire line', () => {
+  const source = 'OUTPUT BAD + OTHER';
+  const issues = [{ line: 1, column: 8, message: 'first' }, { line: 1, column: 14, message: 'second' }];
+  assert.equal(diagnosticAtOffset(source, issues, 7), issues[0]);
+  assert.equal(diagnosticAtOffset(source, issues, 9), issues[0]);
+  assert.equal(diagnosticAtOffset(source, issues, 10), null);
+  assert.equal(diagnosticAtOffset(source, issues, 13), issues[1]);
+  assert.equal(diagnosticAtOffset(source, issues, 3), null);
 });
