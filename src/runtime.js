@@ -342,7 +342,14 @@ export function createRuntime(compiled, options = {}) {
     create: (i, bounds) => defaultValue(parseType(i), bounds),
     fileOp, forContinue(current, end, step) { if (!isNumber(step) || step === 0) fail('FOR STEP must be a nonzero number'); return step > 0 ? current <= end : current >= end; },
     caseMatches(v, lo, hi, range) { v = scalar(v); lo = scalar(lo); hi = scalar(hi); return range ? v >= lo && v <= hi : same(v, lo); },
-    refName: i => activeRefs[canonicalIds[i]] === undefined ? cellMemory.promote(cellById(i), name(i)) : cellMemory.retain(activeRefs[canonicalIds[i]]),
+    refName: i => {
+      if (activeRefs[canonicalIds[i]] !== undefined) return cellMemory.retain(activeRefs[canonicalIds[i]]);
+      const key = name(i), fields = key.split('.');
+      if (fields.length === 1) return cellMemory.promote(cellById(i), key);
+      let target = cell(fields.shift());
+      for (const field of fields) target = fieldCell(read(target), field);
+      return cellMemory.promote(target, key);
+    },
     refIndex: (v, a) => cellMemory.alias(indexCell(v, a), 'array element'),
     refField: (v, i) => cellMemory.alias(fieldCell(v, name(i)), name(i)),
     deref(v) { if (!v?.__pointer) fail('Cannot dereference non-pointer'); return read(v.cell); },

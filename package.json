@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Dependency-free CAIE pseudocode to WebAssembly compiler and IDE",
   "scripts": {
-    "test": "node tests/compiler.test.js && node tests/native.test.js && node tests/editor.test.js && node tests/editor-search.test.js && node tests/editor-navigation.test.js && node tests/editor-history.test.js && node tests/explorer-selection.test.js",
+    "test": "node tests/compiler.test.js && node tests/native.test.js && node tests/conformance.test.js && node tests/editor.test.js && node tests/editor-search.test.js && node tests/editor-navigation.test.js && node tests/editor-history.test.js && node tests/explorer-selection.test.js",
     "build": "node build.js",
     "serve": "node server.js",
     "bootstrap": "node bootstrap/bootstrap.js",
