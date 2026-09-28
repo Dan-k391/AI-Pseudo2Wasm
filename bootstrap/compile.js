@@ -28,22 +28,23 @@ export async function compileSelfHosted(source, compiler, options = {}) {
 
 if (process.argv[1] && fileURLToPath(import.meta.url).toLowerCase() === resolve(process.argv[1]).toLowerCase()) {
   const release = process.argv.slice(2).includes('--release');
-  const paths = process.argv.slice(2).filter(argument => argument !== '--release');
+  const optimization = process.argv.slice(2).includes('--optimize') ? 'speed' : 'standard';
+  const paths = process.argv.slice(2).filter(argument => argument !== '--release' && argument !== '--optimize');
   const inputPath = paths[0];
   if (!inputPath) {
-    console.error('Usage: npm run selfhost:compile -- <source.pseudo> [output.wasm] [--release]');
+    console.error('Usage: npm run selfhost:compile -- <source.pseudo> [output.wasm] [--release] [--optimize]');
     process.exitCode = 1;
   } else {
     try {
       const outputPath = resolve(paths[1] || inputPath.replace(/\.pseudo$/i, '') + '.wasm');
       const source = await readFile(inputPath, 'utf8');
       const compiler = await loadSelfHostedCompiler();
-      const result = await compileSelfHosted(source, compiler, { release });
+      const result = await compileSelfHosted(source, compiler, { release, optimization });
       await writeFile(outputPath, result.binary);
       const extension = extname(outputPath);
       const metadataPath = extension ? outputPath.slice(0, -extension.length) + '.meta.json' : outputPath + '.meta.json';
-      await writeFile(metadataPath, JSON.stringify({ strings: result.strings, literalStrings: result.literalStrings, types: result.types, classes: result.classes, routines: result.routines, native: !!result.native, release: !!result.release, nativeLabels: result.nativeLabels, nativeDataEnd: result.nativeDataEnd, nativeGlobalBase: result.nativeGlobalBase, nativeFrameBase: result.nativeFrameBase }, null, 2));
-      console.log(`Compiled ${inputPath} with self-hosted core → ${outputPath} (${result.binary.length} bytes, ${result.release ? 'release' : 'guarded'} mode)`);
+      await writeFile(metadataPath, JSON.stringify({ strings: result.strings, literalStrings: result.literalStrings, types: result.types, classes: result.classes, routines: result.routines, native: !!result.native, release: !!result.release, optimization: result.optimization || 'standard', nativeLabels: result.nativeLabels, nativeDataEnd: result.nativeDataEnd, nativeGlobalBase: result.nativeGlobalBase, nativeFrameBase: result.nativeFrameBase }, null, 2));
+      console.log(`Compiled ${inputPath} with self-hosted core → ${outputPath} (${result.binary.length} bytes, ${result.release ? 'release' : 'guarded'}, ${result.optimization || 'standard'} optimization)`);
     } catch (error) {
       console.error(error.message);
       process.exitCode = 1;

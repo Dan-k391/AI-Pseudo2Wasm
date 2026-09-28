@@ -118,6 +118,71 @@ NEXT I
   await assert.rejects(createRuntime(invalid).run(), /FOR STEP must be a nonzero number/);
 });
 
+test('speed optimization keeps constant-step loops and multi-dimensional array values', async () => {
+  const source = `DECLARE Grid : ARRAY[0:2, 0:2] OF INTEGER
+DECLARE I : INTEGER
+DECLARE J : INTEGER
+FOR I ← 0 TO 2
+  FOR J ← 0 TO 2
+    Grid[I, J] ← I * 10 + J
+  NEXT J
+NEXT I
+OUTPUT Grid[1, 2]
+FOR I ← 2 TO 0 STEP -1
+  OUTPUT Grid[I, I]
+NEXT I
+`;
+  const standard = await compileSelfHosted(source, compiler, { release: true });
+  const speed = await compileSelfHosted(source, compiler, { release: true, optimization: 'speed' });
+  assert.equal(speed.nativeBackend, 'selfhosted');
+  assert.equal(speed.optimization, 'speed');
+  assert.ok(speed.binary.length < standard.binary.length);
+  assert.deepEqual((await createRuntime(speed).run()).output, (await createRuntime(standard).run()).output);
+  assert.deepEqual((await createRuntime(speed).run()).output, ['12', '22', '11', '0']);
+});
+
+test('speed optimization retains dynamic index errors, literal bounds and guarded limits', async () => {
+  const sources = [
+    { source: 'DECLARE A : ARRAY[1:3] OF INTEGER\nA[4] ← 1\n', line: 2 },
+    { source: 'DECLARE A : ARRAY[1:3] OF INTEGER\nDECLARE I : REAL\nI ← 1.5\nA[I] ← 1\n', line: 4 },
+    { source: 'DECLARE A : ARRAY[1:3] OF INTEGER\nDECLARE I : INTEGER\nI ← 0\nA[I] ← 1\n', line: 4 },
+  ];
+  for (const item of sources) {
+    const built = await compileSelfHosted(item.source, compiler, { release: true, optimization: 'speed' });
+    await assert.rejects(createRuntime(built).run(), error => error.line === item.line && /bounds/.test(error.message));
+  }
+  const zeroStep = await compileSelfHosted('DECLARE S : INTEGER\nDECLARE I : INTEGER\nFOR I ← 1 TO 3 STEP S\n  OUTPUT I\nNEXT I\n', compiler, { release: true, optimization: 'speed' });
+  await assert.rejects(createRuntime(zeroStep).run(), /FOR STEP must be a nonzero number/);
+  const guarded = await compileSelfHosted('DECLARE I : INTEGER\nFOR I ← 1 TO 100\n  OUTPUT I\nNEXT I\n', compiler, { optimization: 'speed' });
+  assert.equal(guarded.release, false);
+  await assert.rejects(createRuntime(guarded, { maxSteps: 3 }).run(), /Execution limit/);
+});
+
+test('speed zero-fill loop falls back to checked stores outside the array extent', async () => {
+  const source = `DECLARE Flags : ARRAY[0:4] OF BOOLEAN
+FUNCTION Clear(N : INTEGER) RETURNS INTEGER
+  DECLARE I : INTEGER
+  FOR I ← 0 TO N - 1
+    Flags[I] ← FALSE
+  NEXT I
+  RETURN 1
+ENDFUNCTION
+OUTPUT Clear(5)
+`;
+  const built = await compileSelfHosted(source, compiler, { release: true, optimization: 'speed' });
+  assert.equal(built.nativeBackend, 'selfhosted');
+  assert.deepEqual((await createRuntime(built).run()).output, ['1']);
+  const module = new WebAssembly.Module(built.binary);
+  const env = {};
+  for (const entry of WebAssembly.Module.imports(module)) {
+    env[entry.name] = entry.name === 'fail' ? (code, line) => { throw new Error(`Error ${code} at line ${line}`); } : () => 0;
+  }
+  const instance = new WebAssembly.Instance(module, { env });
+  assert.equal(instance.exports.CLEAR(0), 1);
+  assert.equal(instance.exports.CLEAR(5), 1);
+  assert.throws(() => instance.exports.CLEAR(6), /Error 2 at line 5/);
+});
+
 test('self-hosted native peephole removes multiplication by one', async () => {
   const prefix = 'DECLARE X : INTEGER\nX ← 7\n';
   const direct = await compileSelfHosted(prefix + 'X ← X\nOUTPUT X\n', compiler);
@@ -253,12 +318,18 @@ test('native and compatibility paths agree on all complex example output', async
   for (const example of advancedExamples) {
     const compatible = compile(example.code), native = await compileSelfHosted(example.code, compiler);
     const release = await compileSelfHosted(example.code, compiler, { release: true });
+    const speed = await compileSelfHosted(example.code, compiler, { optimization: 'speed' });
+    const speedRelease = await compileSelfHosted(example.code, compiler, { release: true, optimization: 'speed' });
     const options = { maxSteps: 500000, seed: 12345, inputLines: example.name === 'ASCII Minesweeper' ? ['F', '1', '1', 'Q'] : [] };
     const baseline = await createRuntime(compatible, options).run();
     const lowered = await createRuntime(native, options).run();
     const optimized = await createRuntime(release, options).run();
+    const speedResult = await createRuntime(speed, options).run();
+    const speedReleaseResult = await createRuntime(speedRelease, options).run();
     assert.deepEqual(lowered.output, baseline.output, example.name);
     assert.deepEqual(optimized.output, baseline.output, `${example.name} release`);
+    assert.deepEqual(speedResult.output, baseline.output, `${example.name} speed guarded`);
+    assert.deepEqual(speedReleaseResult.output, baseline.output, `${example.name} speed release`);
   }
 });
 

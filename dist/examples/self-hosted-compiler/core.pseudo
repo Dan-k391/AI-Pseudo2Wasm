@@ -1350,7 +1350,15 @@ WHILE POSITION <= LENGTH(SOURCE)
           OUTPUT "GET"
           OUTPUT "I:" & FOR_STEP_NAME
           OUTPUT "GET"
-          OUTPUT "FOR_TEST"
+          IF STEP_EXPR = "1" THEN
+            OUTPUT "FOR_TEST_UP"
+          ELSE
+            IF STEP_EXPR = "-1" THEN
+              OUTPUT "FOR_TEST_DOWN"
+            ELSE
+              OUTPUT "FOR_TEST"
+            ENDIF
+          ENDIF
           FRAME ← "Z"
         "J" :
           OUTPUT "INDEX"

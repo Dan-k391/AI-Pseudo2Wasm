@@ -24,7 +24,7 @@ function abiPrefix(binary) {
 }
 
 export async function compileWith(compiledCore, compiledAssembler, source) {
-  const result = await createRuntime(compiledCore, { inputLines: [source.replace(/\r\n/g, '\n')], maxSteps: 10000000 }).run();
+  const result = await createRuntime(compiledCore, { inputLines: [source.replace(/\r\n/g, '\n')], maxSteps: 50000000 }).run();
   if (result.status !== 'completed') throw new Error(`Compiler stopped with status ${result.status}`);
   return assembleSelfHosted(result.output, compiledAssembler);
 }

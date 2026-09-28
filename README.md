@@ -57,6 +57,8 @@ Run `npm run bootstrap` to build the pseudocode compiler, compatibility assemble
 
 The compiler targets the [Cambridge 2026 pseudocode guide](https://www.cambridgeinternational.org/Images/697401-2026-pseudocode-guide-for-teachers.pdf). Run in the IDE caps execution at 250,000 steps and reports the active source line. The optional Release build checkbox produces native WASM without step checks for Compile and Download; compatibility programs remain guarded.
 
+The **Optimization** selector defaults to Speed for native WASM. Speed specializes `FOR` loops with literal steps, folds proven in-range array indexes, and simplifies array address checks. Speed Release also turns a simple, safe Boolean array zero-fill loop into a WebAssembly `memory.fill`, with the original checked loop as a fallback. Standard retains the earlier lowering for comparison. Run remains guarded with either setting; Release is a separate choice. The self-hosted command line accepts `--optimize` for Speed builds.
+
 ## Verify
 
 ```powershell

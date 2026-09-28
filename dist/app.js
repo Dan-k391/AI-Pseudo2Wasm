@@ -52,7 +52,7 @@ function normalizeProject(raw) {
     breakpoints: Object.fromEntries(Object.entries(raw?.breakpoints || {}).map(([name, lines]) => [name, Array.isArray(lines) ? [...new Set(lines.filter(line => Number.isInteger(line) && line > 0))] : []])),
     activePane: raw?.activePane === 'secondary' && secondaryActive ? 'secondary' : 'primary',
     split: !!raw?.split && !!secondaryActive,
-    input: String(raw?.input || ''), releaseBuild: !!raw?.releaseBuild, files: raw?.files && typeof raw.files === 'object' ? raw.files : {}, records: raw?.records && typeof raw.records === 'object' ? raw.records : {},
+    input: String(raw?.input || ''), releaseBuild: !!raw?.releaseBuild, optimizationLevel: raw?.optimizationLevel === 'standard' ? 'standard' : 'speed', files: raw?.files && typeof raw.files === 'object' ? raw.files : {}, records: raw?.records && typeof raw.records === 'object' ? raw.records : {},
     layout: { explorerWidth: Number(layout.explorerWidth) || (innerWidth < 800 ? 180 : 218), toolsWidth: Number(layout.toolsWidth) || 292, bottomHeight: Number(layout.bottomHeight) || 230, splitRatio: Number(layout.splitRatio) || 50, explorerVisible: layout.explorerVisible ?? innerWidth > 660, toolsVisible: layout.toolsVisible ?? innerWidth > 1100, terminalVisible: layout.terminalVisible ?? true },
   };
 }
@@ -65,7 +65,7 @@ function applyTheme() {
   document.querySelector('meta[name="theme-color"]').content = THEME_COLORS[project.theme];
 }
 applyTheme();
-let selectedDataFile = null, lastCompiled = null, builtFile = null, builtSource = null, builtRequestedRelease = false, buildInfo = null;
+let selectedDataFile = null, lastCompiled = null, builtFile = null, builtSource = null, builtRequestedRelease = false, builtOptimization = null, buildInfo = null;
 let problemsByFile = {}, activeConsole = 'output', consoleLines = [], waitingInput = null, runToken = 0, saveTimer = null, diagnoseTimer = null;
 let debugSession = null;
 let draggedFile = null;
@@ -741,7 +741,7 @@ function renderConsole() {
     }
   } else {
     const info = document.createElement('div'); info.className = 'build-log';
-    if (buildInfo) info.innerHTML = `<strong>${escape(buildInfo.name)} · build succeeded</strong><br>Execution: ${buildInfo.native ? 'Self-hosted native WASM' : 'Self-hosted compatibility WASM'} · ${buildInfo.release ? 'release' : 'guarded'}<br>WebAssembly module: ${buildInfo.size.toLocaleString()} bytes<br>Routines: ${buildInfo.routines}<br>Imports: ${buildInfo.imports}<br>Compiled in ${buildInfo.ms.toFixed(1)} ms`;
+    if (buildInfo) info.innerHTML = `<strong>${escape(buildInfo.name)} · build succeeded</strong><br>Execution: ${buildInfo.native ? 'Self-hosted native WASM' : 'Self-hosted compatibility WASM'} · ${buildInfo.release ? 'release' : 'guarded'} · ${buildInfo.optimization}<br>WebAssembly module: ${buildInfo.size.toLocaleString()} bytes<br>Routines: ${buildInfo.routines}<br>Imports: ${buildInfo.imports}<br>Compiled in ${buildInfo.ms.toFixed(1)} ms`;
     else info.textContent = 'Compile the active source file to inspect its WebAssembly module.';
     consoleContent.append(info);
     if (buildInfo) { const button = document.createElement('button'); button.className = 'tiny-button'; button.style.marginTop = '14px'; button.textContent = 'Download project .json'; button.addEventListener('click', downloadProject); consoleContent.append(button); }
@@ -976,22 +976,22 @@ function navigateBack() {
   const previous = navigationHistory.pop();
   if (previous) navigateTo(previous.file, previous.offset, previous.offset, false);
 }
-async function build({ release = false } = {}) {
+async function build({ release = false, optimization = project.optimizationLevel } = {}) {
   const name = activeName(); if (!name) { log('Open a source file before compiling.', 'error'); return null; }
   const source = activeSource(), start = performance.now();
   const editorIssues = analyzeSource(source);
   try {
-    const result = await compileSelfHostedInBrowser(source, { release });
+    const result = await compileSelfHostedInBrowser(source, { release, optimization });
     if (!WebAssembly.validate(result.binary)) throw new Error('Generated WebAssembly module did not validate');
     if (name !== activeName() || source !== activeSource()) return null;
     const ms = performance.now() - start;
-    lastCompiled = result; builtFile = name; builtSource = source; builtRequestedRelease = release;
-    buildInfo = { name, size: result.binary.length, routines: result.routines.length, imports: WebAssembly.Module.imports(new WebAssembly.Module(result.binary)).length, native: !!result.native, release: !!result.release, ms };
-    $('build-status').textContent = `${name} · succeeded`; $('build-size').textContent = `${result.binary.length.toLocaleString()} bytes · ${result.release ? 'release' : 'guarded'} · ${ms.toFixed(1)} ms`;
+    lastCompiled = result; builtFile = name; builtSource = source; builtRequestedRelease = release; builtOptimization = optimization;
+    buildInfo = { name, size: result.binary.length, routines: result.routines.length, imports: WebAssembly.Module.imports(new WebAssembly.Module(result.binary)).length, native: !!result.native, release: !!result.release, optimization: result.optimization || 'standard', ms };
+    $('build-status').textContent = `${name} · succeeded`; $('build-size').textContent = `${result.binary.length.toLocaleString()} bytes · ${result.release ? 'release' : 'guarded'} · ${buildInfo.optimization} · ${ms.toFixed(1)} ms`;
     setProblems(name, editorIssues); return result;
   } catch (error) {
     if (name !== activeName() || source !== activeSource()) return null;
-    lastCompiled = null; builtFile = null; builtSource = null; buildInfo = null;
+    lastCompiled = null; builtFile = null; builtSource = null; builtOptimization = null; buildInfo = null;
     $('build-status').textContent = `${name} · failed`; $('build-size').textContent = `Line ${error.line || 1}`;
     setProblems(name, mergeDiagnostics(editorIssues, diagnosticsFromError(error, source))); switchConsole('diagnostics'); return null;
   }
@@ -1000,7 +1000,7 @@ async function runProgram() {
   runToken++; waitingInput = null; debugSession = null; consoleLines = []; $('output-count').textContent = '0'; switchConsole('output');
   renderCode('primary'); renderCode('secondary');
   const name = activeName(), source = activeSource();
-  const compiled = builtFile === name && builtSource === source && !builtRequestedRelease && lastCompiled ? lastCompiled : await build();
+  const compiled = builtFile === name && builtSource === source && !builtRequestedRelease && builtOptimization === project.optimizationLevel && lastCompiled ? lastCompiled : await build();
   if (!compiled) { switchConsole('diagnostics'); return; }
   const preload = $('stdin').value.replace(/\r/g, '').replace(/\n$/, '');
   const session = { token: runToken, filename: name, compiled, files: structuredClone(project.files), records: structuredClone(project.records || {}), inputLines: preload ? preload.split('\n') : [], printed: 0, runtimeMs: 0, seed: (Math.random() * 0x100000000) >>> 0, today: new Date().toISOString() };
@@ -1065,7 +1065,7 @@ async function continueRun(session) {
   finally { $('run-button').disabled = false; $('run-button').innerHTML = '<span class="play-icon">▶</span> Run program'; $('debug-button').disabled = false; if (activeConsole === 'debug') renderConsole(); }
 }
 function downloadBlob(blob, filename) { const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = filename; document.body.append(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(link.href), 3000); }
-async function downloadWasm() { const name = activeName(), release = $('release-build').checked, compiled = builtFile === name && builtSource === activeSource() && builtRequestedRelease === release && lastCompiled ? lastCompiled : await build({ release }); if (compiled) downloadBlob(new Blob([compiled.binary], { type: 'application/wasm' }), name.replace(/\.pseudo$/i, '') + '.wasm'); }
+async function downloadWasm() { const name = activeName(), release = $('release-build').checked, compiled = builtFile === name && builtSource === activeSource() && builtRequestedRelease === release && builtOptimization === project.optimizationLevel && lastCompiled ? lastCompiled : await build({ release }); if (compiled) downloadBlob(new Blob([compiled.binary], { type: 'application/wasm' }), name.replace(/\.pseudo$/i, '') + '.wasm'); }
 function downloadProject() { save(); downloadBlob(new Blob([JSON.stringify(project, null, 2)], { type: 'application/json' }), 'pseudo2wasm-project.json'); }
 function renderDataFiles() {
   const list = $('virtual-file-list'); list.replaceChildren(); const names = Object.keys(project.files).sort();
@@ -1331,6 +1331,8 @@ $('example-list').append(compilerFolder);
 $('stdin').value = project.input;
 $('release-build').checked = project.releaseBuild;
 $('release-build').addEventListener('change', () => { project.releaseBuild = $('release-build').checked; scheduleSave(); });
+$('optimization-level').value = project.optimizationLevel;
+$('optimization-level').addEventListener('change', () => { project.optimizationLevel = $('optimization-level').value; scheduleSave(); });
 $('dialog-cancel').addEventListener('click', () => $('workspace-dialog').close());
 $('stdin').addEventListener('input', scheduleSave);
 $('file-editor').addEventListener('input', () => { if (selectedDataFile) { project.files[selectedDataFile] = $('file-editor').value; scheduleSave(); } });
@@ -1349,7 +1351,7 @@ $('import-file').addEventListener('change', async event => {
   try {
     for (const file of files) {
       const content = await file.text();
-      if (file.name.toLowerCase().endsWith('.json')) { const imported = normalizeProject(JSON.parse(content)); stopDebug(); project = imported; applyTheme(); selectedDataFile = null; problemsByFile = {}; lastCompiled = null; builtSource = null; builtFile = null; $('stdin').value = project.input; $('release-build').checked = project.releaseBuild; renderDataFiles(); renderWorkspace(); save(); }
+      if (file.name.toLowerCase().endsWith('.json')) { const imported = normalizeProject(JSON.parse(content)); stopDebug(); project = imported; applyTheme(); selectedDataFile = null; problemsByFile = {}; lastCompiled = null; builtSource = null; builtFile = null; builtOptimization = null; $('stdin').value = project.input; $('release-build').checked = project.releaseBuild; $('optimization-level').value = project.optimizationLevel; renderDataFiles(); renderWorkspace(); save(); }
       else if (file.name.toLowerCase().endsWith('.pseudo')) { const name = uniqueFilename(validFilename(file.name) || 'imported.pseudo'); project.sourceFiles[name] = content; openSource(name); }
       else { project.files[file.name] = content; selectedDataFile = file.name; renderDataFiles(); save(); }
     }

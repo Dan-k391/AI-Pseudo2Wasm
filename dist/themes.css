@@ -120,7 +120,9 @@ html[data-theme]:not([data-theme="pseudo"]) .inspector-tab{color:var(--theme-mut
 html[data-theme]:not([data-theme="pseudo"]) .inspector-tab.active{color:var(--theme-accent);border-color:var(--theme-accent)}
 html[data-theme]:not([data-theme="pseudo"]) .field-label,html[data-theme]:not([data-theme="pseudo"]) .build-mode-toggle strong{color:var(--theme-soft)}
 html[data-theme]:not([data-theme="pseudo"]) .field-label span,html[data-theme]:not([data-theme="pseudo"]) .tool-hint,html[data-theme]:not([data-theme="pseudo"]) .build-mode-toggle small{color:var(--theme-muted)}
+html[data-theme]:not([data-theme="pseudo"]) .optimization-control small{color:var(--theme-muted)}
 html[data-theme]:not([data-theme="pseudo"]) .tool-textarea,html[data-theme]:not([data-theme="pseudo"]) .virtual-file,html[data-theme]:not([data-theme="pseudo"]) .info-card,html[data-theme]:not([data-theme="pseudo"]) .build-mode-toggle{background:var(--theme-input);border-color:var(--theme-border);color:var(--theme-text)}
+html[data-theme]:not([data-theme="pseudo"]) .optimization-control,html[data-theme]:not([data-theme="pseudo"]) .optimization-control select{background:var(--theme-input);border-color:var(--theme-border);color:var(--theme-text)}
 html[data-theme]:not([data-theme="pseudo"]) .tool-textarea::placeholder{color:var(--theme-muted)}
 html[data-theme]:not([data-theme="pseudo"]) .tool-textarea:focus,html[data-theme]:not([data-theme="pseudo"]) .virtual-file.active{border-color:var(--theme-accent)}
 html[data-theme]:not([data-theme="pseudo"]) .tiny-button{background:var(--theme-accent-soft);border-color:var(--theme-accent);color:var(--theme-accent)}

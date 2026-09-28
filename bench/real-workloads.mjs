@@ -14,7 +14,9 @@ const cWasm = join(work, 'real-emscripten.wasm');
 const asWasm = join(work, 'real-assemblyscript.wasm');
 const pseudoGuardedWasm = join(work, 'real-pseudo-guarded.wasm');
 const pseudoReleaseWasm = join(work, 'real-pseudo-release.wasm');
-const toolNames = ['PseudoRelease', 'PseudoGuarded', 'Emscripten', 'AssemblyScript'];
+const pseudoSpeedReleaseWasm = join(work, 'real-pseudo-speed-release.wasm');
+const pseudoSpeedGuardedWasm = join(work, 'real-pseudo-speed-guarded.wasm');
+const toolNames = ['PseudoSpeedRelease', 'PseudoRelease', 'PseudoSpeedGuarded', 'PseudoGuarded', 'Emscripten', 'AssemblyScript'];
 const samples = positiveInteger(process.env.BENCH_SAMPLES, 9);
 const warmups = positiveInteger(process.env.BENCH_WARMUPS, 3);
 
@@ -108,6 +110,12 @@ async function main() {
   const build = {};
 
   let start = performance.now();
+  const pseudoSpeedRelease = await compileSelfHosted(pseudoSource, compiler, { release: true, optimization: 'speed' });
+  build.PseudoSpeedRelease = performance.now() - start;
+  start = performance.now();
+  const pseudoSpeedGuarded = await compileSelfHosted(pseudoSource, compiler, { optimization: 'speed' });
+  build.PseudoSpeedGuarded = performance.now() - start;
+  start = performance.now();
   const pseudoRelease = await compileSelfHosted(pseudoSource, compiler, { release: true });
   build.PseudoRelease = performance.now() - start;
   start = performance.now();
@@ -119,9 +127,17 @@ async function main() {
   if (!pseudoGuarded.native || pseudoGuarded.nativeBackend !== 'selfhosted') {
     throw new Error('Guarded build did not use the self-hosted native WASM compiler');
   }
+  if (!pseudoSpeedRelease.native || pseudoSpeedRelease.nativeBackend !== 'selfhosted' || pseudoSpeedRelease.optimization !== 'speed' || !pseudoSpeedRelease.release) {
+    throw new Error('Speed release build did not use the self-hosted native WASM compiler');
+  }
+  if (!pseudoSpeedGuarded.native || pseudoSpeedGuarded.nativeBackend !== 'selfhosted' || pseudoSpeedGuarded.optimization !== 'speed' || pseudoSpeedGuarded.release) {
+    throw new Error('Speed guarded build did not use the self-hosted native WASM compiler');
+  }
   await Promise.all([
     writeFile(pseudoReleaseWasm, pseudoRelease.binary),
     writeFile(pseudoGuardedWasm, pseudoGuarded.binary),
+    writeFile(pseudoSpeedReleaseWasm, pseudoSpeedRelease.binary),
+    writeFile(pseudoSpeedGuardedWasm, pseudoSpeedGuarded.binary),
   ]);
   // emcc and asc require filesystem inputs; the checked-in source is used unchanged.
   build.Emscripten = command(emcc, [
@@ -134,7 +150,9 @@ async function main() {
   ]).elapsedMs;
 
   const binaries = {
+    PseudoSpeedRelease: pseudoSpeedRelease.binary,
     PseudoRelease: pseudoRelease.binary,
+    PseudoSpeedGuarded: pseudoSpeedGuarded.binary,
     PseudoGuarded: pseudoGuarded.binary,
     Emscripten: await readFile(cWasm),
     AssemblyScript: await readFile(asWasm),
@@ -172,8 +190,8 @@ async function main() {
   } else {
     console.log(`Node ${process.version}; ${emccVersion}; AssemblyScript ${asVersion}`);
     console.log(`Median milliseconds per call (${samples} samples, ${warmups} warmups; lower is better)`);
-    console.log('| Workload | Pseudo release | Pseudo guarded | Emscripten | AssemblyScript |');
-    console.log('| --- | ---: | ---: | ---: | ---: |');
+    console.log('| Workload | Pseudo speed release | Pseudo standard release | Pseudo speed guarded | Pseudo standard guarded | Emscripten | AssemblyScript |');
+    console.log('| --- | ---: | ---: | ---: | ---: | ---: | ---: |');
     for (const workload of workloads) {
       const row = results[workload.export];
       console.log(`| ${workload.name} (${workload.input}) | ${toolNames.map(name => row[name].medianMs.toFixed(3)).join(' | ')} |`);

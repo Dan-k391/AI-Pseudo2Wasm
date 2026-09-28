@@ -120,8 +120,11 @@ export async function assembleSelfHosted(ir, assembler, metadata = decodeSelfHos
 }
 
 export async function lowerSelfHostedNative(ir, lowerer, options = {}) {
+  const markers = [];
+  if (options.release) markers.push('M:RELEASE');
+  if (options.optimization === 'speed') markers.push('M:OPT_SPEED');
   const result = await createRuntime(lowerer, {
-    inputLines: [(options.release ? ['M:RELEASE', ...ir] : ir).join('\n')],
+    inputLines: [[...markers, ...ir].join('\n')],
     maxSteps: 20000000,
   }).run();
   if (result.status !== 'completed') throw new Error(`Native lowerer stopped with status ${result.status}`);
@@ -132,7 +135,7 @@ export async function lowerSelfHostedNative(ir, lowerer, options = {}) {
   const binary = fromLatin1(binaryLine.slice(2));
   if (!WebAssembly.validate(binary)) throw new Error('Self-hosted native lowerer emitted invalid WebAssembly');
   return {
-    binary, native: true, release: !!options.release, nativeBackend: 'selfhosted', nativeLabels: result.output.filter(line => line.startsWith('L:')).map(line => line.slice(2)),
+    binary, native: true, release: !!options.release, optimization: options.optimization === 'speed' ? 'speed' : 'standard', nativeBackend: 'selfhosted', nativeLabels: result.output.filter(line => line.startsWith('L:')).map(line => line.slice(2)),
     nativeGlobalBase: Number(result.output.find(line => line.startsWith('G:'))?.slice(2) || 8),
     nativeFrameBase: Number(result.output.find(line => line.startsWith('F:'))?.slice(2) || 0),
     nativeDataEnd: Number(result.output.find(line => line.startsWith('D:'))?.slice(2) || 8),

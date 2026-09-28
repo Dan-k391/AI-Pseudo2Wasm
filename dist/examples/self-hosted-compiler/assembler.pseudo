@@ -300,6 +300,12 @@ WHILE POSITION <= LENGTH(IR)
       "FOR_TEST" :
         CODE ← CODE & CHR(16) & CHR(23) & CHR(69) & CHR(13) & CHR(1)
         MODE ← "DONE"
+      "FOR_TEST_UP" :
+        CODE ← CODE & CHR(16) & CHR(23) & CHR(69) & CHR(13) & CHR(1)
+        MODE ← "DONE"
+      "FOR_TEST_DOWN" :
+        CODE ← CODE & CHR(16) & CHR(23) & CHR(69) & CHR(13) & CHR(1)
+        MODE ← "DONE"
       "ENDWHILE" :
         CODE ← CODE & CHR(12) & CHR(0) & CHR(11) & CHR(11)
         DEPTH ← DEPTH - 1
