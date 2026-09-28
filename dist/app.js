@@ -440,6 +440,16 @@ function openSource(name, which = project.activePane) {
   state.active = name; project.activePane = which;
   renderWorkspace(); scheduleSave(); panes[which].editor.focus();
 }
+function openExampleSource(filename, code) {
+  const name = uniqueFilename(filename);
+  project.sourceFiles[name] = code;
+  openSource(name);
+  const pane = panes[project.activePane];
+  pane.editor.setSelectionRange(0, 0);
+  pane.editor.scrollTop = pane.editor.scrollLeft = 0;
+  pane.highlight.scrollTop = pane.highlight.scrollLeft = pane.gutter.scrollTop = 0;
+  updateStatus();
+}
 function insertFileAt(list, name, target, after) {
   if (target === name && list.includes(name)) return list;
   const next = list.filter(item => item !== name);
@@ -1288,7 +1298,7 @@ for (const which of ['primary', 'secondary']) {
   });
 }
 $('example-count').textContent = String(examples.length + compilerExamples.length).padStart(2, '0');
-for (const example of examples) { const button = document.createElement('button'); button.className = 'example-item'; button.innerHTML = `<span class="example-icon">◇</span><span>${escape(example.name)}</span>`; button.addEventListener('click', () => { const name = uniqueFilename(example.filename); project.sourceFiles[name] = example.code; openSource(name); }); $('example-list').append(button); }
+for (const example of examples) { const button = document.createElement('button'); button.className = 'example-item'; button.innerHTML = `<span class="example-icon">◇</span><span>${escape(example.name)}</span>`; button.addEventListener('click', () => openExampleSource(example.filename, example.code)); $('example-list').append(button); }
 const compilerFolder = document.createElement('details');
 compilerFolder.className = 'compiler-example-folder';
 const compilerFolderLabel = document.createElement('summary');
@@ -1307,9 +1317,7 @@ for (const example of compilerExamples) {
       const response = await fetch(new URL(`./examples/self-hosted-compiler/${example.filename}`, import.meta.url));
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const source = await response.text();
-      const name = uniqueFilename(example.filename);
-      project.sourceFiles[name] = source;
-      openSource(name);
+      openExampleSource(example.filename, source);
     } catch {
       showToast(`Could not load ${example.filename}. Please try again.`);
     } finally {
