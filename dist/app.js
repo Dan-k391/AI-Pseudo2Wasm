@@ -13,6 +13,8 @@ const $ = id => document.getElementById(id);
 const app = document.querySelector('.app');
 const consoleContent = $('console-content');
 const STORAGE = 'pseudo2wasm.project.v2';
+const THEMES = new Set(['pseudo', 'atom-one-dark-pro', 'dracula', 'nord', 'github-light']);
+const THEME_COLORS = { pseudo: '#0d1219', 'atom-one-dark-pro': '#282c34', dracula: '#282a36', nord: '#2e3440', 'github-light': '#ffffff' };
 const panes = {
   primary: { group: $('primary-group'), tabs: $('primary-tabs'), editor: $('primary-editor'), highlight: $('primary-highlight'), gutter: $('primary-gutter'), completion: $('primary-completion'), search: $('primary-search'), searchInput: $('primary-search-input'), replaceInput: $('primary-replace-input'), peek: $('primary-reference-peek'), diagnostic: $('primary-diagnostic-tooltip') },
   secondary: { group: $('secondary-group'), tabs: $('secondary-tabs'), editor: $('secondary-editor'), highlight: $('secondary-highlight'), gutter: $('secondary-gutter'), completion: $('secondary-completion'), search: $('secondary-search'), searchInput: $('secondary-search-input'), replaceInput: $('secondary-replace-input'), peek: $('secondary-reference-peek'), diagnostic: $('secondary-diagnostic-tooltip') },
@@ -41,6 +43,7 @@ function normalizeProject(raw) {
   const layout = raw?.layout || {};
   return {
     sourceFiles, fileOrder, panes: { primary: { tabs: primaryTabs, active: primaryActive }, secondary: { tabs: secondaryTabs, active: secondaryActive } },
+    theme: THEMES.has(raw?.theme) ? raw.theme : 'pseudo',
     breakpoints: Object.fromEntries(Object.entries(raw?.breakpoints || {}).map(([name, lines]) => [name, Array.isArray(lines) ? [...new Set(lines.filter(line => Number.isInteger(line) && line > 0))] : []])),
     activePane: raw?.activePane === 'secondary' && secondaryActive ? 'secondary' : 'primary',
     split: !!raw?.split && !!secondaryActive,
@@ -51,6 +54,12 @@ function normalizeProject(raw) {
 let saved = null;
 try { saved = JSON.parse(localStorage.getItem(STORAGE) || localStorage.getItem('pseudo2wasm.project.v1') || 'null'); } catch {}
 let project = normalizeProject(saved);
+function applyTheme() {
+  document.documentElement.dataset.theme = project.theme;
+  $('theme-select').value = project.theme;
+  document.querySelector('meta[name="theme-color"]').content = THEME_COLORS[project.theme];
+}
+applyTheme();
 let selectedDataFile = null, lastCompiled = null, builtFile = null, builtSource = null, builtRequestedRelease = false, buildInfo = null;
 let problemsByFile = {}, activeConsole = 'output', consoleLines = [], waitingInput = null, runToken = 0, saveTimer = null, diagnoseTimer = null;
 let debugSession = null;
@@ -1296,7 +1305,7 @@ $('import-file').addEventListener('change', async event => {
   try {
     for (const file of files) {
       const content = await file.text();
-      if (file.name.toLowerCase().endsWith('.json')) { const imported = normalizeProject(JSON.parse(content)); stopDebug(); project = imported; selectedDataFile = null; problemsByFile = {}; lastCompiled = null; builtSource = null; builtFile = null; $('stdin').value = project.input; $('release-build').checked = project.releaseBuild; renderDataFiles(); renderWorkspace(); save(); }
+      if (file.name.toLowerCase().endsWith('.json')) { const imported = normalizeProject(JSON.parse(content)); stopDebug(); project = imported; applyTheme(); selectedDataFile = null; problemsByFile = {}; lastCompiled = null; builtSource = null; builtFile = null; $('stdin').value = project.input; $('release-build').checked = project.releaseBuild; renderDataFiles(); renderWorkspace(); save(); }
       else if (file.name.toLowerCase().endsWith('.pseudo')) { const name = uniqueFilename(validFilename(file.name) || 'imported.pseudo'); project.sourceFiles[name] = content; openSource(name); }
       else { project.files[file.name] = content; selectedDataFile = file.name; renderDataFiles(); save(); }
     }
@@ -1304,6 +1313,7 @@ $('import-file').addEventListener('change', async event => {
   event.target.value = '';
 });
 $('split-editor').addEventListener('click', splitEditor); $('close-split').addEventListener('click', closeSplit);
+$('theme-select').addEventListener('change', event => { project.theme = THEMES.has(event.target.value) ? event.target.value : 'pseudo'; applyTheme(); save(); });
 $('toggle-explorer').addEventListener('click', () => { project.layout.explorerVisible = !project.layout.explorerVisible; applyLayout(); scheduleSave(); });
 $('toggle-tools').addEventListener('click', () => { project.layout.toolsVisible = !project.layout.toolsVisible; applyLayout(); scheduleSave(); });
 $('toggle-terminal').addEventListener('click', () => { project.layout.terminalVisible = !project.layout.terminalVisible; applyLayout(); scheduleSave(); });

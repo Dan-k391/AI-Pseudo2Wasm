@@ -1,0 +1,152 @@
+/* Shared theme control. The original Pseudo2Wasm palette remains the default. */
+.theme-control{display:flex;align-items:center;gap:7px;color:var(--muted);font-size:11px;white-space:nowrap}
+.theme-control select{max-width:166px;height:30px;padding:4px 24px 4px 8px;border:1px solid var(--line);border-radius:5px;background:var(--panel2);color:var(--text);font:12px var(--sans);cursor:pointer}
+.theme-control select:focus-visible{outline:2px solid var(--teal);outline-offset:2px}
+@media(max-width:1100px){.theme-control{font-size:0}.theme-control select{max-width:124px}}
+@media(max-width:660px){.top-actions{flex-wrap:wrap}.theme-control select{max-width:122px}}
+
+html[data-theme="atom-one-dark-pro"]{
+  --theme-editor:#282c34;--theme-top:#21252b;--theme-activity:#1b1f25;--theme-sidebar:#21252b;
+  --theme-tab:#2c313a;--theme-panel:#21252b;--theme-input:#1e2228;--theme-popup:#2c313a;
+  --theme-hover:#363d49;--theme-selected:#34465a;--theme-border:#3b414d;
+  --theme-text:#d7dae0;--theme-soft:#abb2bf;--theme-muted:#87919f;--theme-gutter:#636d7b;
+  --theme-accent:#61afef;--theme-accent-soft:#233b50;--theme-on-accent:#17212b;
+  --theme-key:#c678dd;--theme-flow:#c678dd;--theme-type:#e5c07b;--theme-string:#98c379;
+  --theme-number:#d19a66;--theme-comment:#7b8491;--theme-op:#56b6c2;--theme-error:#e06c75;
+}
+html[data-theme="dracula"]{
+  --theme-editor:#282a36;--theme-top:#21222c;--theme-activity:#191a23;--theme-sidebar:#21222c;
+  --theme-tab:#303341;--theme-panel:#21222c;--theme-input:#1d1e28;--theme-popup:#303341;
+  --theme-hover:#414559;--theme-selected:#41405e;--theme-border:#45485b;
+  --theme-text:#f8f8f2;--theme-soft:#d6d8e3;--theme-muted:#a3a8be;--theme-gutter:#8088a6;
+  --theme-accent:#bd93f9;--theme-accent-soft:#463760;--theme-on-accent:#211a30;
+  --theme-key:#ff79c6;--theme-flow:#bd93f9;--theme-type:#8be9fd;--theme-string:#f1fa8c;
+  --theme-number:#bd93f9;--theme-comment:#8994bb;--theme-op:#ffb86c;--theme-error:#ff5555;
+}
+html[data-theme="nord"]{
+  --theme-editor:#2e3440;--theme-top:#242933;--theme-activity:#222731;--theme-sidebar:#2b313d;
+  --theme-tab:#343b49;--theme-panel:#292f3a;--theme-input:#252b35;--theme-popup:#353d4b;
+  --theme-hover:#414b5b;--theme-selected:#3b5361;--theme-border:#4c566a;
+  --theme-text:#eceff4;--theme-soft:#d8dee9;--theme-muted:#a4b0c0;--theme-gutter:#8998a9;
+  --theme-accent:#88c0d0;--theme-accent-soft:#334d58;--theme-on-accent:#203039;
+  --theme-key:#81a1c1;--theme-flow:#b48ead;--theme-type:#ebcb8b;--theme-string:#a3be8c;
+  --theme-number:#b48ead;--theme-comment:#9baabd;--theme-op:#8fbcbb;--theme-error:#bf616a;
+}
+html[data-theme="github-light"]{
+  color-scheme:light;
+  --theme-editor:#ffffff;--theme-top:#f6f8fa;--theme-activity:#eaeef2;--theme-sidebar:#f6f8fa;
+  --theme-tab:#f3f4f6;--theme-panel:#f6f8fa;--theme-input:#ffffff;--theme-popup:#ffffff;
+  --theme-hover:#eaeef2;--theme-selected:#ddf4ff;--theme-border:#d0d7de;
+  --theme-text:#24292f;--theme-soft:#39434d;--theme-muted:#57606a;--theme-gutter:#6e7781;
+  --theme-accent:#0969da;--theme-accent-soft:#ddf4ff;--theme-on-accent:#ffffff;
+  --theme-key:#cf222e;--theme-flow:#8250df;--theme-type:#953800;--theme-string:#0a3069;
+  --theme-number:#0550ae;--theme-comment:#6e7781;--theme-op:#24292f;--theme-error:#cf222e;
+}
+
+/* Keep the complete workbench, overlays, and editor tokens on one palette. */
+html[data-theme]:not([data-theme="pseudo"]){
+  --bg:var(--theme-editor);--top:var(--theme-top);--panel:var(--theme-sidebar);
+  --panel2:var(--theme-popup);--line:var(--theme-border);--muted:var(--theme-muted);
+  --soft:var(--theme-soft);--text:var(--theme-text);--teal:var(--theme-accent);
+  --teal-dark:var(--theme-accent-soft);--amber:var(--theme-number);--red:var(--theme-error);
+}
+html[data-theme]:not([data-theme="pseudo"]) .topbar{background:var(--theme-top)}
+html[data-theme]:not([data-theme="pseudo"]) .brand-mark{background:var(--theme-accent-soft);border-color:var(--theme-accent);color:var(--theme-accent)}
+html[data-theme]:not([data-theme="pseudo"]) .button-subtle:hover{background:var(--theme-hover);color:var(--theme-text)}
+html[data-theme]:not([data-theme="pseudo"]) .button-outline{background:var(--theme-accent-soft);border-color:var(--theme-accent);color:var(--theme-accent)}
+html[data-theme]:not([data-theme="pseudo"]) .button-outline:hover{background:var(--theme-selected)}
+html[data-theme]:not([data-theme="pseudo"]) .button-primary{background:var(--theme-accent);color:var(--theme-on-accent);box-shadow:none}
+html[data-theme]:not([data-theme="pseudo"]) .button-primary:hover{filter:brightness(1.12)}
+html[data-theme]:not([data-theme="pseudo"]) .activity-bar{background:var(--theme-activity);border-color:var(--theme-border)}
+html[data-theme]:not([data-theme="pseudo"]) .activity-symbol,html[data-theme]:not([data-theme="pseudo"]) .activity-button{color:var(--theme-muted)}
+html[data-theme]:not([data-theme="pseudo"]) .activity-button:hover{background:var(--theme-hover);color:var(--theme-text)}
+html[data-theme]:not([data-theme="pseudo"]) .activity-button.active{background:var(--theme-selected);border-left-color:var(--theme-accent);color:var(--theme-text)}
+html[data-theme]:not([data-theme="pseudo"]) .sidebar{background:var(--theme-sidebar)}
+html[data-theme]:not([data-theme="pseudo"]) .sidebar-title,html[data-theme]:not([data-theme="pseudo"]) .sidebar-heading{color:var(--theme-soft)}
+html[data-theme]:not([data-theme="pseudo"]) .source-item,html[data-theme]:not([data-theme="pseudo"]) .example-item,html[data-theme]:not([data-theme="pseudo"]) .file-item{color:var(--theme-soft)}
+html[data-theme]:not([data-theme="pseudo"]) .source-item:hover,html[data-theme]:not([data-theme="pseudo"]) .example-item:hover,html[data-theme]:not([data-theme="pseudo"]) .file-item:hover{background:var(--theme-hover);color:var(--theme-text)}
+html[data-theme]:not([data-theme="pseudo"]) .source-item.active,html[data-theme]:not([data-theme="pseudo"]) .source-item.selected,html[data-theme]:not([data-theme="pseudo"]) .source-item.selected.active{background:var(--theme-selected);color:var(--theme-text);box-shadow:inset 2px 0 0 var(--theme-accent)}
+html[data-theme]:not([data-theme="pseudo"]) .source-item.selected:hover{background:var(--theme-selected)}
+html[data-theme]:not([data-theme="pseudo"]) .source-item .file-glyph,html[data-theme]:not([data-theme="pseudo"]) .source-tab .file-glyph{color:var(--theme-accent)}
+html[data-theme]:not([data-theme="pseudo"]) .source-drag-hint,html[data-theme]:not([data-theme="pseudo"]) .sidebar-foot{color:var(--theme-muted)}
+html[data-theme]:not([data-theme="pseudo"]) .sidebar-file-actions button,html[data-theme]:not([data-theme="pseudo"]) .sidebar-title-actions button{color:var(--theme-soft)}
+html[data-theme]:not([data-theme="pseudo"]) .sidebar-file-actions button:hover,html[data-theme]:not([data-theme="pseudo"]) .sidebar-title-actions button:hover{background:var(--theme-hover);color:var(--theme-accent)}
+html[data-theme]:not([data-theme="pseudo"]) .main-panel,html[data-theme]:not([data-theme="pseudo"]) .editor-group,html[data-theme]:not([data-theme="pseudo"]) .line-numbers{background:var(--theme-editor)}
+html[data-theme]:not([data-theme="pseudo"]) .editor-group.active-group{box-shadow:inset 0 2px 0 var(--theme-accent)}
+html[data-theme]:not([data-theme="pseudo"]) .editor-controls,html[data-theme]:not([data-theme="pseudo"]) .editor-tabs{background:var(--theme-tab);color:var(--theme-muted);border-color:var(--theme-border)}
+html[data-theme]:not([data-theme="pseudo"]) .editor-controls button{color:var(--theme-soft)}
+html[data-theme]:not([data-theme="pseudo"]) .editor-controls button:hover{background:var(--theme-hover);color:var(--theme-text)}
+html[data-theme]:not([data-theme="pseudo"]) .source-tab{background:var(--theme-tab);color:var(--theme-muted);border-color:var(--theme-border)}
+html[data-theme]:not([data-theme="pseudo"]) .source-tab.active{background:var(--theme-editor);color:var(--theme-text);border-top-color:var(--theme-accent)}
+html[data-theme]:not([data-theme="pseudo"]) .source-tab:hover{color:var(--theme-text)}
+html[data-theme]:not([data-theme="pseudo"]) .tab-close{color:var(--theme-muted)}
+html[data-theme]:not([data-theme="pseudo"]) .tab-close:hover{background:var(--theme-hover);color:var(--theme-text)}
+html[data-theme]:not([data-theme="pseudo"]) .line-numbers{color:var(--theme-gutter);border-color:var(--theme-border)}
+html[data-theme]:not([data-theme="pseudo"]) .gutter-button:hover{background:var(--theme-hover)}
+html[data-theme]:not([data-theme="pseudo"]) .gutter-line.debug-line{background:var(--theme-accent-soft);color:var(--theme-accent)}
+html[data-theme]:not([data-theme="pseudo"]) .gutter-line.debug-line .gutter-marker{color:var(--theme-accent)}
+html[data-theme]:not([data-theme="pseudo"]) .gutter-button.has-breakpoint .gutter-marker{color:var(--theme-error)}
+html[data-theme]:not([data-theme="pseudo"]) .code-highlight{color:var(--theme-text)}
+html[data-theme]:not([data-theme="pseudo"]) .code-highlight .tok-key{color:var(--theme-key)}
+html[data-theme]:not([data-theme="pseudo"]) .code-highlight .tok-flow{color:var(--theme-flow)}
+html[data-theme]:not([data-theme="pseudo"]) .code-highlight .tok-type{color:var(--theme-type)}
+html[data-theme]:not([data-theme="pseudo"]) .code-highlight .tok-string{color:var(--theme-string)}
+html[data-theme]:not([data-theme="pseudo"]) .code-highlight .tok-number{color:var(--theme-number)}
+html[data-theme]:not([data-theme="pseudo"]) .code-highlight .tok-comment{color:var(--theme-comment)}
+html[data-theme]:not([data-theme="pseudo"]) .code-highlight .tok-op{color:var(--theme-op)}
+html[data-theme]:not([data-theme="pseudo"]) .code-editor{caret-color:var(--theme-text)}
+html[data-theme]:not([data-theme="pseudo"]) .code-editor::selection{background:color-mix(in srgb,var(--theme-accent) 34%,transparent)}
+html[data-theme]:not([data-theme="pseudo"]) .code-highlight .editor-error-underline{text-decoration-color:var(--theme-error);background:color-mix(in srgb,var(--theme-error) 14%,transparent)}
+html[data-theme]:not([data-theme="pseudo"]) .code-highlight .search-match{background:color-mix(in srgb,var(--theme-number) 25%,transparent);box-shadow:inset 0 -1px var(--theme-number)}
+html[data-theme]:not([data-theme="pseudo"]) .code-highlight .search-current{background:color-mix(in srgb,var(--theme-number) 40%,transparent);box-shadow:inset 0 0 0 1px var(--theme-number)}
+html[data-theme]:not([data-theme="pseudo"]) .code-highlight .navigation-link{text-decoration-color:var(--theme-accent);background:color-mix(in srgb,var(--theme-accent) 14%,transparent)}
+html[data-theme]:not([data-theme="pseudo"]) .editor-status{background:var(--theme-panel);color:var(--theme-soft)}
+html[data-theme]:not([data-theme="pseudo"]) .bottom-panel,html[data-theme]:not([data-theme="pseudo"]) .panel-tabs{background:var(--theme-panel)}
+html[data-theme]:not([data-theme="pseudo"]) .panel-tab{color:var(--theme-muted)}
+html[data-theme]:not([data-theme="pseudo"]) .panel-tab.active{color:var(--theme-accent);border-color:var(--theme-accent)}
+html[data-theme]:not([data-theme="pseudo"]) .tab-count,html[data-theme]:not([data-theme="pseudo"]) .terminal-prompt{background:var(--theme-accent-soft)}
+html[data-theme]:not([data-theme="pseudo"]) .console-content,html[data-theme]:not([data-theme="pseudo"]) .build-log,html[data-theme]:not([data-theme="pseudo"]) .console-line{color:var(--theme-text)}
+html[data-theme]:not([data-theme="pseudo"]) .console-meta,html[data-theme]:not([data-theme="pseudo"]) .empty-console{color:var(--theme-muted)}
+html[data-theme]:not([data-theme="pseudo"]) .console-input,html[data-theme]:not([data-theme="pseudo"]) .debug-variable-value{color:var(--theme-number)}
+html[data-theme]:not([data-theme="pseudo"]) .console-error,html[data-theme]:not([data-theme="pseudo"]) .problem-item strong{color:var(--theme-error)}
+html[data-theme]:not([data-theme="pseudo"]) .debug-toolbar button{background:var(--theme-accent-soft);border-color:var(--theme-accent);color:var(--theme-accent)}
+html[data-theme]:not([data-theme="pseudo"]) .debug-section h4,html[data-theme]:not([data-theme="pseudo"]) .debug-variable-name{color:var(--theme-text)}
+html[data-theme]:not([data-theme="pseudo"]) .debug-status,html[data-theme]:not([data-theme="pseudo"]) .debug-empty{color:var(--theme-muted)}
+html[data-theme]:not([data-theme="pseudo"]) .debug-variable,html[data-theme]:not([data-theme="pseudo"]) .problem-item{border-color:var(--theme-border)}
+html[data-theme]:not([data-theme="pseudo"]) .problem-item:hover{background:var(--theme-hover)}
+html[data-theme]:not([data-theme="pseudo"]) .inspector{background:var(--theme-sidebar)}
+html[data-theme]:not([data-theme="pseudo"]) .inspector-title,html[data-theme]:not([data-theme="pseudo"]) .inspector-tabs,html[data-theme]:not([data-theme="pseudo"]) .inspector-build{border-color:var(--theme-border)}
+html[data-theme]:not([data-theme="pseudo"]) .inspector-tab{color:var(--theme-muted)}
+html[data-theme]:not([data-theme="pseudo"]) .inspector-tab.active{color:var(--theme-accent);border-color:var(--theme-accent)}
+html[data-theme]:not([data-theme="pseudo"]) .field-label,html[data-theme]:not([data-theme="pseudo"]) .build-mode-toggle strong{color:var(--theme-soft)}
+html[data-theme]:not([data-theme="pseudo"]) .field-label span,html[data-theme]:not([data-theme="pseudo"]) .tool-hint,html[data-theme]:not([data-theme="pseudo"]) .build-mode-toggle small{color:var(--theme-muted)}
+html[data-theme]:not([data-theme="pseudo"]) .tool-textarea,html[data-theme]:not([data-theme="pseudo"]) .virtual-file,html[data-theme]:not([data-theme="pseudo"]) .info-card,html[data-theme]:not([data-theme="pseudo"]) .build-mode-toggle{background:var(--theme-input);border-color:var(--theme-border);color:var(--theme-text)}
+html[data-theme]:not([data-theme="pseudo"]) .tool-textarea::placeholder{color:var(--theme-muted)}
+html[data-theme]:not([data-theme="pseudo"]) .tool-textarea:focus,html[data-theme]:not([data-theme="pseudo"]) .virtual-file.active{border-color:var(--theme-accent)}
+html[data-theme]:not([data-theme="pseudo"]) .tiny-button{background:var(--theme-accent-soft);border-color:var(--theme-accent);color:var(--theme-accent)}
+html[data-theme]:not([data-theme="pseudo"]) .info-card-head,html[data-theme]:not([data-theme="pseudo"]) .info-card p{color:var(--theme-muted)}
+html[data-theme]:not([data-theme="pseudo"]) .info-card-value,html[data-theme]:not([data-theme="pseudo"]) .virtual-file.active{color:var(--theme-accent)}
+html[data-theme]:not([data-theme="pseudo"]) .resize-handle{background:var(--theme-border)}
+html[data-theme]:not([data-theme="pseudo"]) .resize-handle:hover,html[data-theme]:not([data-theme="pseudo"]) .resize-handle.dragging{background:var(--theme-accent)}
+html[data-theme]:not([data-theme="pseudo"]) .terminal-prompt{border-color:var(--theme-accent)}
+html[data-theme]:not([data-theme="pseudo"]) .terminal-prompt label{color:var(--theme-accent)}
+html[data-theme]:not([data-theme="pseudo"]) .terminal-prompt input{color:var(--theme-text);border-color:var(--theme-border)}
+html[data-theme]:not([data-theme="pseudo"]) .terminal-prompt button{background:var(--theme-accent);color:var(--theme-on-accent)}
+
+/* Floating editor UI needs the same surface and contrast as the workbench. */
+html[data-theme]:not([data-theme="pseudo"]) .editor-context-menu,html[data-theme]:not([data-theme="pseudo"]) .editor-search,html[data-theme]:not([data-theme="pseudo"]) .editor-completion,html[data-theme]:not([data-theme="pseudo"]) .reference-peek,html[data-theme]:not([data-theme="pseudo"]) .quick-open-panel,html[data-theme]:not([data-theme="pseudo"]) .workspace-dialog,html[data-theme]:not([data-theme="pseudo"]) .editor-diagnostic-tooltip{background:var(--theme-popup);border-color:var(--theme-border);color:var(--theme-text)}
+html[data-theme]:not([data-theme="pseudo"]) .editor-search input,html[data-theme]:not([data-theme="pseudo"]) .quick-open-panel input,html[data-theme]:not([data-theme="pseudo"]) .workspace-dialog input{background:var(--theme-input);border-color:var(--theme-border);color:var(--theme-text)}
+html[data-theme]:not([data-theme="pseudo"]) .editor-search input:focus,html[data-theme]:not([data-theme="pseudo"]) .quick-open-panel input:focus,html[data-theme]:not([data-theme="pseudo"]) .workspace-dialog input:focus{border-color:var(--theme-accent)}
+html[data-theme]:not([data-theme="pseudo"]) .editor-context-menu button:hover,html[data-theme]:not([data-theme="pseudo"]) .editor-search button:hover,html[data-theme]:not([data-theme="pseudo"]) .completion-item:hover,html[data-theme]:not([data-theme="pseudo"]) .completion-item.selected,html[data-theme]:not([data-theme="pseudo"]) .quick-open-item:hover,html[data-theme]:not([data-theme="pseudo"]) .reference-peek-item:hover{background:var(--theme-hover);color:var(--theme-text)}
+html[data-theme]:not([data-theme="pseudo"]) .editor-context-menu button,html[data-theme]:not([data-theme="pseudo"]) .editor-search button,html[data-theme]:not([data-theme="pseudo"]) .completion-item,html[data-theme]:not([data-theme="pseudo"]) .quick-open-item,html[data-theme]:not([data-theme="pseudo"]) .reference-peek-item{color:var(--theme-text)}
+html[data-theme]:not([data-theme="pseudo"]) .editor-search button[aria-pressed="true"],html[data-theme]:not([data-theme="pseudo"]) .reference-peek-head{background:var(--theme-accent-soft);color:var(--theme-accent)}
+html[data-theme]:not([data-theme="pseudo"]) .reference-peek-head{border-color:var(--theme-border)}
+html[data-theme]:not([data-theme="pseudo"]) .reference-peek-head strong,html[data-theme]:not([data-theme="pseudo"]) .reference-peek-item .peek-location,html[data-theme]:not([data-theme="pseudo"]) .editor-diagnostic-tooltip.symbol .editor-diagnostic-heading{color:var(--theme-accent)}
+html[data-theme]:not([data-theme="pseudo"]) .reference-peek-count,html[data-theme]:not([data-theme="pseudo"]) .reference-peek-footer,html[data-theme]:not([data-theme="pseudo"]) .completion-detail,html[data-theme]:not([data-theme="pseudo"]) .menu-shortcut{color:var(--theme-muted)}
+html[data-theme]:not([data-theme="pseudo"]) .editor-diagnostic-heading,html[data-theme]:not([data-theme="pseudo"]) .dialog-error{color:var(--theme-error)}
+html[data-theme]:not([data-theme="pseudo"]) .dialog-description,html[data-theme]:not([data-theme="pseudo"]) .workspace-dialog label{color:var(--theme-soft)}
+html[data-theme]:not([data-theme="pseudo"]) .dialog-button{background:var(--theme-hover);border-color:var(--theme-border);color:var(--theme-text)}
+html[data-theme]:not([data-theme="pseudo"]) .dialog-submit{background:var(--theme-accent);border-color:var(--theme-accent);color:var(--theme-on-accent)}
+html[data-theme]:not([data-theme="pseudo"]) .dialog-submit:hover{filter:brightness(1.12)}
+html[data-theme]:not([data-theme="pseudo"]) .dialog-submit.danger{background:var(--theme-error);border-color:var(--theme-error);color:#fff}
+html[data-theme]:not([data-theme="pseudo"]) .workspace-toast{background:var(--theme-popup);border-color:var(--theme-error);color:var(--theme-text)}

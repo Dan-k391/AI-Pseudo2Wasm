@@ -11,6 +11,8 @@ npm run serve
 
 Open <http://127.0.0.1:4173>. The VS Code style workspace saves source files, open tabs, panel sizes, input, and virtual files in browser storage. Create or import several `.pseudo` files from Explorer, keep them open as tabs, and use **Split editor** to view two files side by side. Alt-click a file in Explorer to open it in the other editor. Run, Compile, and Download .wasm use the active editor's file.
 
+Use the **Theme** selector in the top bar to switch between Pseudo2Wasm, Atom One Dark Pro, Dracula, Nord, and GitHub Light. The selected theme is saved with the workspace and included in exported project JSON.
+
 Drag the Explorer, Program Tools, terminal, and split-editor dividers to resize them. The activity bar toggles panels. `Ctrl+Enter` runs, `Ctrl+Shift+B` compiles, `Ctrl+S` saves locally, `Ctrl+\\` splits the editor, `Ctrl+W` closes a tab, and `Ctrl+Tab` cycles tabs. Compile a file and use the Build panel to download a portable project JSON.
 
 The editor supports `Ctrl+Z` undo, `Ctrl+Shift+Z` or `Ctrl+Y` redo, and an editor action menu on right-click. `Ctrl+F` opens Find; Enter and Shift+Enter move through matches while keeping Find focused. `F2` renames the symbol under the cursor and its references in the current file, with one undo step for the rename.

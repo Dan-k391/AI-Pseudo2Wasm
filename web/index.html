@@ -10,6 +10,7 @@
   <link rel="stylesheet" href="./styles.css">
   <link rel="stylesheet" href="./terminal.css">
   <link rel="stylesheet" href="./workspace.css">
+  <link rel="stylesheet" href="./themes.css">
 </head>
 <body>
   <div class="app">
@@ -22,6 +23,7 @@
       </div>
       <div class="top-actions">
         <span id="save-state" class="save-state">Saved locally</span>
+        <label class="theme-control">Theme <select id="theme-select" aria-label="Color theme"><option value="pseudo">Pseudo2Wasm</option><option value="atom-one-dark-pro">Atom One Dark Pro</option><option value="dracula">Dracula</option><option value="nord">Nord</option><option value="github-light">GitHub Light</option></select></label>
         <button id="import-button" class="button button-subtle" title="Open pseudocode files or a project JSON">Open</button>
         <input id="import-file" type="file" accept=".pseudo,.txt,.json" multiple hidden>
         <button id="download-button" class="button button-subtle" title="Download compiled WebAssembly">Download .wasm</button>
