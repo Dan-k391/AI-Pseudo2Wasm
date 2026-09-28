@@ -3,11 +3,15 @@ import { cp, mkdir, rm } from 'node:fs/promises';
 await rm('dist', { recursive: true, force: true });
 await mkdir('dist/src', { recursive: true });
 await mkdir('dist/bootstrap', { recursive: true });
+await mkdir('dist/examples/self-hosted-compiler', { recursive: true });
 await cp('web', 'dist', { recursive: true });
 for (const name of ['parser.js', 'runtime.js', 'string-memory.js', 'cell-memory.js', 'native-runtime.js', 'selfhost.js']) {
   await cp(`src/${name}`, `dist/src/${name}`);
 }
 for (const name of ['core.wasm', 'core.json', 'assembler.wasm', 'assembler.json', 'native.wasm', 'native.json']) {
   await cp(`bootstrap/build/${name}`, `dist/bootstrap/${name}`);
+}
+for (const name of ['core.pseudo', 'native.pseudo', 'assembler.pseudo']) {
+  await cp(`bootstrap/${name}`, `dist/examples/self-hosted-compiler/${name}`);
 }
 console.log('Built dependency-free static IDE in dist/');

@@ -27,6 +27,8 @@ Click a line number or press `F9` to toggle a breakpoint. **Debug** (`F5`) pause
 
 The Explorer includes runnable examples for memoized Fibonacci, the N queens backtracking problem (set `N` to change the board size), and an ASCII Minesweeper game. Minesweeper asks for an action (`R`, `F`, or `Q`), then a row and column for reveal or flag moves; enter each value in the terminal.
 
+Expand **Self-hosted compiler** under Examples to open its three pseudocode stages in the editor: `core.pseudo`, `native.pseudo`, and `assembler.pseudo`. The site build copies them directly from `bootstrap/`, so the examples match the compiler source used to build the WebAssembly modules.
+
 ## Use the self-hosted compiler from JavaScript
 
 ```js

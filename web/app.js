@@ -28,6 +28,11 @@ const examples = [
   { name: 'Classes', filename: 'classes.pseudo', code: `CLASS Counter\n  PRIVATE Value : INTEGER\n  PUBLIC PROCEDURE NEW(Start : INTEGER)\n    Value ← Start\n  ENDPROCEDURE\n  PUBLIC PROCEDURE Increment()\n    Value ← Value + 1\n  ENDPROCEDURE\n  PUBLIC FUNCTION Current() RETURNS INTEGER\n    RETURN Value\n  ENDFUNCTION\nENDCLASS\n\nDECLARE MyCounter : Counter\nMyCounter ← NEW Counter(5)\nCALL MyCounter.Increment()\nOUTPUT MyCounter.Current()\n` },
   ...advancedExamples,
 ];
+const compilerExamples = [
+  { filename: 'core.pseudo', description: 'Source to stack IR' },
+  { filename: 'native.pseudo', description: 'IR to native WebAssembly' },
+  { filename: 'assembler.pseudo', description: 'IR to compatibility WebAssembly' },
+];
 
 function normalizeProject(raw) {
   const sourceFiles = raw?.sourceFiles && typeof raw.sourceFiles === 'object' ? { ...raw.sourceFiles } : { 'main.pseudo': typeof raw?.source === 'string' ? raw.source : examples[0].code };
@@ -1282,8 +1287,39 @@ for (const which of ['primary', 'secondary']) {
     else replaceSearch(which, action === 'all');
   });
 }
-$('example-count').textContent = String(examples.length).padStart(2, '0');
+$('example-count').textContent = String(examples.length + compilerExamples.length).padStart(2, '0');
 for (const example of examples) { const button = document.createElement('button'); button.className = 'example-item'; button.innerHTML = `<span class="example-icon">◇</span><span>${escape(example.name)}</span>`; button.addEventListener('click', () => { const name = uniqueFilename(example.filename); project.sourceFiles[name] = example.code; openSource(name); }); $('example-list').append(button); }
+const compilerFolder = document.createElement('details');
+compilerFolder.className = 'compiler-example-folder';
+const compilerFolderLabel = document.createElement('summary');
+compilerFolderLabel.innerHTML = `<span>Self-hosted compiler</span><span class="compiler-example-count">${compilerExamples.length.toString().padStart(2, '0')}</span>`;
+const compilerFiles = document.createElement('div');
+compilerFiles.className = 'compiler-example-files';
+for (const example of compilerExamples) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'example-item';
+  button.title = example.description;
+  button.innerHTML = `<span class="example-icon">◇</span><span>${example.filename}</span>`;
+  button.addEventListener('click', async () => {
+    button.disabled = true;
+    try {
+      const response = await fetch(new URL(`./examples/self-hosted-compiler/${example.filename}`, import.meta.url));
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const source = await response.text();
+      const name = uniqueFilename(example.filename);
+      project.sourceFiles[name] = source;
+      openSource(name);
+    } catch {
+      showToast(`Could not load ${example.filename}. Please try again.`);
+    } finally {
+      button.disabled = false;
+    }
+  });
+  compilerFiles.append(button);
+}
+compilerFolder.append(compilerFolderLabel, compilerFiles);
+$('example-list').append(compilerFolder);
 $('stdin').value = project.input;
 $('release-build').checked = project.releaseBuild;
 $('release-build').addEventListener('change', () => { project.releaseBuild = $('release-build').checked; scheduleSave(); });

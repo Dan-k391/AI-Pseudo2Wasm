@@ -8,6 +8,16 @@ html,body{height:100%;overflow:hidden}.app{height:100vh;min-height:0;overflow:hi
 
 .source-drag-hint{padding:7px 9px 2px;color:#718795;font-size:10px;line-height:1.35}
 .source-item,.source-tab{cursor:grab;user-select:none}
+.compiler-example-folder{min-width:0}
+.compiler-example-folder summary{display:flex;align-items:center;gap:8px;min-height:30px;padding:7px 9px;color:var(--soft);font-size:12px;cursor:pointer;list-style:none;white-space:nowrap}
+.compiler-example-folder summary::-webkit-details-marker{display:none}
+.compiler-example-folder summary::before{content:'▸';color:var(--muted);font:700 12px var(--mono)}
+.compiler-example-folder[open] summary::before{content:'▾'}
+.compiler-example-folder summary:hover{background:#26323c;color:var(--text)}
+.compiler-example-folder summary:focus-visible{outline:2px solid var(--teal);outline-offset:-2px}
+.compiler-example-count{margin-left:auto;color:var(--muted);font:11px var(--mono)}
+.compiler-example-files{display:grid;gap:1px;margin-left:14px;padding-left:3px;border-left:1px solid var(--line)}
+.compiler-example-files .example-item{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .source-item:active,.source-tab:active{cursor:grabbing}
 .dragging-source{opacity:.42}
 .source-item.drop-before{box-shadow:inset 0 2px 0 #6fe0ce}
