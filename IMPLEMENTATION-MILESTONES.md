@@ -48,3 +48,11 @@ performance before claiming a speedup.
 
 **Gate:** All tests and the byte-for-byte bootstrap pass; representative
 benchmarks show the effect of the optimization and release setting.
+
+The native pseudocode lowerer now removes multiplication by one. Its opt-in
+release mode omits step checks and promotes eligible main-program scalars to
+WASM locals, flushing final values to memory. The IDE always runs guarded
+modules. On this machine, `node bench/native.mjs` measured the million-iteration
+sum at 3.13 ms guarded and 0.99 ms release (3.15×); generated modules were
+1121 and 945 bytes respectively. These are local medians, not a universal
+speed guarantee.

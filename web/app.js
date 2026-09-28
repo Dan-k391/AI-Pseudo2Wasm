@@ -42,14 +42,14 @@ function normalizeProject(raw) {
     sourceFiles, fileOrder, panes: { primary: { tabs: primaryTabs, active: primaryActive }, secondary: { tabs: secondaryTabs, active: secondaryActive } },
     activePane: raw?.activePane === 'secondary' && secondaryActive ? 'secondary' : 'primary',
     split: !!raw?.split && !!secondaryActive,
-    input: String(raw?.input || ''), files: raw?.files && typeof raw.files === 'object' ? raw.files : {}, records: raw?.records && typeof raw.records === 'object' ? raw.records : {},
+    input: String(raw?.input || ''), releaseBuild: !!raw?.releaseBuild, files: raw?.files && typeof raw.files === 'object' ? raw.files : {}, records: raw?.records && typeof raw.records === 'object' ? raw.records : {},
     layout: { explorerWidth: Number(layout.explorerWidth) || (innerWidth < 800 ? 180 : 218), toolsWidth: Number(layout.toolsWidth) || 292, bottomHeight: Number(layout.bottomHeight) || 230, splitRatio: Number(layout.splitRatio) || 50, explorerVisible: layout.explorerVisible ?? innerWidth > 660, toolsVisible: layout.toolsVisible ?? innerWidth > 1100, terminalVisible: layout.terminalVisible ?? true },
   };
 }
 let saved = null;
 try { saved = JSON.parse(localStorage.getItem(STORAGE) || localStorage.getItem('pseudo2wasm.project.v1') || 'null'); } catch {}
 let project = normalizeProject(saved);
-let selectedDataFile = null, lastCompiled = null, builtFile = null, builtSource = null, buildInfo = null;
+let selectedDataFile = null, lastCompiled = null, builtFile = null, builtSource = null, builtRequestedRelease = false, buildInfo = null;
 let problemsByFile = {}, activeConsole = 'output', consoleLines = [], waitingInput = null, runToken = 0, saveTimer = null, diagnoseTimer = null;
 let draggedFile = null;
 let selectedFiles = [], selectionAnchor = null;
@@ -652,7 +652,7 @@ function renderConsole() {
     }
   } else {
     const info = document.createElement('div'); info.className = 'build-log';
-    if (buildInfo) info.innerHTML = `<strong>${escape(buildInfo.name)} · build succeeded</strong><br>Execution: ${buildInfo.native ? 'Self-hosted native WASM' : 'Self-hosted compatibility WASM'}<br>WebAssembly module: ${buildInfo.size.toLocaleString()} bytes<br>Routines: ${buildInfo.routines}<br>Imports: ${buildInfo.imports}<br>Compiled in ${buildInfo.ms.toFixed(1)} ms`;
+    if (buildInfo) info.innerHTML = `<strong>${escape(buildInfo.name)} · build succeeded</strong><br>Execution: ${buildInfo.native ? 'Self-hosted native WASM' : 'Self-hosted compatibility WASM'} · ${buildInfo.release ? 'release' : 'guarded'}<br>WebAssembly module: ${buildInfo.size.toLocaleString()} bytes<br>Routines: ${buildInfo.routines}<br>Imports: ${buildInfo.imports}<br>Compiled in ${buildInfo.ms.toFixed(1)} ms`;
     else info.textContent = 'Compile the active source file to inspect its WebAssembly module.';
     consoleContent.append(info);
     if (buildInfo) { const button = document.createElement('button'); button.className = 'tiny-button'; button.style.marginTop = '14px'; button.textContent = 'Download project .json'; button.addEventListener('click', downloadProject); consoleContent.append(button); }
@@ -850,19 +850,20 @@ function navigateBack() {
   const previous = navigationHistory.pop();
   if (previous) navigateTo(previous.file, previous.offset, previous.offset, false);
 }
-async function build() {
+async function build({ release = false } = {}) {
   const name = activeName(); if (!name) { log('Open a source file before compiling.', 'error'); return null; }
   const source = activeSource(), start = performance.now();
   try {
-    const result = await compileSelfHostedInBrowser(source);
+    const result = await compileSelfHostedInBrowser(source, { release });
     if (!WebAssembly.validate(result.binary)) throw new Error('Generated WebAssembly module did not validate');
     if (name !== activeName() || source !== activeSource()) return null;
     const ms = performance.now() - start;
-    lastCompiled = result; builtFile = name; builtSource = source;
-    buildInfo = { name, size: result.binary.length, routines: result.routines.length, imports: WebAssembly.Module.imports(new WebAssembly.Module(result.binary)).length, native: !!result.native, ms };
-    $('build-status').textContent = `${name} · succeeded`; $('build-size').textContent = `${result.binary.length.toLocaleString()} bytes · ${ms.toFixed(1)} ms`;
+    lastCompiled = result; builtFile = name; builtSource = source; builtRequestedRelease = release;
+    buildInfo = { name, size: result.binary.length, routines: result.routines.length, imports: WebAssembly.Module.imports(new WebAssembly.Module(result.binary)).length, native: !!result.native, release: !!result.release, ms };
+    $('build-status').textContent = `${name} · succeeded`; $('build-size').textContent = `${result.binary.length.toLocaleString()} bytes · ${result.release ? 'release' : 'guarded'} · ${ms.toFixed(1)} ms`;
     setProblems(name, []); return result;
   } catch (error) {
+    if (name !== activeName() || source !== activeSource()) return null;
     lastCompiled = null; builtFile = null; builtSource = null; buildInfo = null;
     $('build-status').textContent = `${name} · failed`; $('build-size').textContent = `Line ${error.line || 1}`;
     setProblems(name, [diagnosticFromError(error, source)]); switchConsole('diagnostics'); return null;
@@ -871,7 +872,7 @@ async function build() {
 async function runProgram() {
   runToken++; waitingInput = null; consoleLines = []; $('output-count').textContent = '0'; switchConsole('output');
   const name = activeName(), source = activeSource();
-  const compiled = builtFile === name && builtSource === source && lastCompiled ? lastCompiled : await build();
+  const compiled = builtFile === name && builtSource === source && !builtRequestedRelease && lastCompiled ? lastCompiled : await build();
   if (!compiled) { switchConsole('diagnostics'); return; }
   const preload = $('stdin').value.replace(/\r/g, '').replace(/\n$/, '');
   const session = { token: runToken, filename: name, compiled, files: structuredClone(project.files), records: structuredClone(project.records || {}), inputLines: preload ? preload.split('\n') : [], printed: 0, runtimeMs: 0, seed: (Math.random() * 0x100000000) >>> 0, today: new Date().toISOString() };
@@ -895,7 +896,7 @@ async function continueRun(session) {
   finally { $('run-button').disabled = false; $('run-button').innerHTML = '<span class="play-icon">▶</span> Run program'; }
 }
 function downloadBlob(blob, filename) { const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = filename; document.body.append(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(link.href), 3000); }
-async function downloadWasm() { const name = activeName(), compiled = builtFile === name && builtSource === activeSource() && lastCompiled ? lastCompiled : await build(); if (compiled) downloadBlob(new Blob([compiled.binary], { type: 'application/wasm' }), name.replace(/\.pseudo$/i, '') + '.wasm'); }
+async function downloadWasm() { const name = activeName(), release = $('release-build').checked, compiled = builtFile === name && builtSource === activeSource() && builtRequestedRelease === release && lastCompiled ? lastCompiled : await build({ release }); if (compiled) downloadBlob(new Blob([compiled.binary], { type: 'application/wasm' }), name.replace(/\.pseudo$/i, '') + '.wasm'); }
 function downloadProject() { save(); downloadBlob(new Blob([JSON.stringify(project, null, 2)], { type: 'application/json' }), 'pseudo2wasm-project.json'); }
 function renderDataFiles() {
   const list = $('virtual-file-list'); list.replaceChildren(); const names = Object.keys(project.files).sort();
@@ -1123,6 +1124,8 @@ for (const which of ['primary', 'secondary']) {
 $('example-count').textContent = String(examples.length).padStart(2, '0');
 for (const example of examples) { const button = document.createElement('button'); button.className = 'example-item'; button.innerHTML = `<span class="example-icon">◇</span><span>${escape(example.name)}</span>`; button.addEventListener('click', () => { const name = uniqueFilename(example.filename); project.sourceFiles[name] = example.code; openSource(name); }); $('example-list').append(button); }
 $('stdin').value = project.input;
+$('release-build').checked = project.releaseBuild;
+$('release-build').addEventListener('change', () => { project.releaseBuild = $('release-build').checked; scheduleSave(); });
 $('dialog-cancel').addEventListener('click', () => $('workspace-dialog').close());
 $('stdin').addEventListener('input', scheduleSave);
 $('file-editor').addEventListener('input', () => { if (selectedDataFile) { project.files[selectedDataFile] = $('file-editor').value; scheduleSave(); } });
@@ -1141,7 +1144,7 @@ $('import-file').addEventListener('change', async event => {
   try {
     for (const file of files) {
       const content = await file.text();
-      if (file.name.toLowerCase().endsWith('.json')) { project = normalizeProject(JSON.parse(content)); selectedDataFile = null; problemsByFile = {}; lastCompiled = null; builtSource = null; builtFile = null; $('stdin').value = project.input; renderDataFiles(); renderWorkspace(); save(); }
+      if (file.name.toLowerCase().endsWith('.json')) { project = normalizeProject(JSON.parse(content)); selectedDataFile = null; problemsByFile = {}; lastCompiled = null; builtSource = null; builtFile = null; $('stdin').value = project.input; $('release-build').checked = project.releaseBuild; renderDataFiles(); renderWorkspace(); save(); }
       else if (file.name.toLowerCase().endsWith('.pseudo')) { const name = uniqueFilename(validFilename(file.name) || 'imported.pseudo'); project.sourceFiles[name] = content; openSource(name); }
       else { project.files[file.name] = content; selectedDataFile = file.name; renderDataFiles(); save(); }
     }
@@ -1152,7 +1155,7 @@ $('split-editor').addEventListener('click', splitEditor); $('close-split').addEv
 $('toggle-explorer').addEventListener('click', () => { project.layout.explorerVisible = !project.layout.explorerVisible; applyLayout(); scheduleSave(); });
 $('toggle-tools').addEventListener('click', () => { project.layout.toolsVisible = !project.layout.toolsVisible; applyLayout(); scheduleSave(); });
 $('toggle-terminal').addEventListener('click', () => { project.layout.terminalVisible = !project.layout.terminalVisible; applyLayout(); scheduleSave(); });
-$('run-button').addEventListener('click', runProgram); $('compile-button').addEventListener('click', async () => { const result = await build(); switchConsole(result ? 'build' : 'diagnostics'); }); $('download-button').addEventListener('click', downloadWasm);
+$('run-button').addEventListener('click', runProgram); $('compile-button').addEventListener('click', async () => { const result = await build({ release: $('release-build').checked }); switchConsole(result ? 'build' : 'diagnostics'); }); $('download-button').addEventListener('click', downloadWasm);
 $('clear-output').addEventListener('click', () => { consoleLines = []; $('output-count').textContent = '0'; renderConsole(); });
 document.querySelectorAll('[data-console-tab]').forEach(button => button.addEventListener('click', () => switchConsole(button.dataset.consoleTab)));
 document.querySelectorAll('[data-tool]').forEach(button => button.addEventListener('click', () => switchTool(button.dataset.tool)));
@@ -1172,7 +1175,7 @@ document.addEventListener('keydown', async event => {
   if (event.key === 'Escape' && !$('quick-open').hidden) { $('quick-open').hidden = true; return; }
   if (!(event.ctrlKey || event.metaKey)) return;
   if (event.key === 'Enter') { event.preventDefault(); runProgram(); }
-  else if (event.shiftKey && event.key.toLowerCase() === 'b') { event.preventDefault(); const result = await build(); switchConsole(result ? 'build' : 'diagnostics'); }
+  else if (event.shiftKey && event.key.toLowerCase() === 'b') { event.preventDefault(); const result = await build({ release: $('release-build').checked }); switchConsole(result ? 'build' : 'diagnostics'); }
   else if (event.key.toLowerCase() === 's') { event.preventDefault(); save(); }
   else if (event.key.toLowerCase() === 'p') { event.preventDefault(); quickOpen(); }
   else if (event.key.toLowerCase() === 'f') { event.preventDefault(); showSearch(project.activePane); }

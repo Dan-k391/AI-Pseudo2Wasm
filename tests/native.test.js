@@ -28,6 +28,37 @@ OUTPUT Total
   assert.equal(new DataView(result.memory.buffer).getFloat64(built.nativeGlobalBase, true), 5000050000);
 });
 
+test('release native modules omit step checks while IDE builds stay guarded', async () => {
+  const source = 'DECLARE Total : INTEGER\nDECLARE I : INTEGER\nFOR I ← 1 TO 1000\n  Total ← Total + I\nNEXT I\nOUTPUT Total\n';
+  const guarded = await compileSelfHosted(source, compiler);
+  const release = await compileSelfHosted(source, compiler, { release: true });
+  assert.equal(guarded.native, true);
+  assert.equal(guarded.release, false);
+  assert.equal(release.native, true);
+  assert.equal(release.release, true);
+  assert.ok(release.binary.length < guarded.binary.length);
+  await assert.rejects(createRuntime(guarded, { maxSteps: 10 }).run(), /Execution limit/);
+  const result = await createRuntime(release, { maxSteps: 10 }).run();
+  assert.deepEqual(result.output, ['500500']);
+  assert.equal(result.steps, 0);
+  assert.equal(new DataView(result.memory.buffer).getFloat64(release.nativeGlobalBase, true), 500500);
+  const invalid = await compileSelfHosted('DECLARE Values : ARRAY[1:2] OF INTEGER\nValues[3] ← 1\n', compiler, { release: true });
+  await assert.rejects(createRuntime(invalid).run(), error => error.line === 2 && /bounds/.test(error.message));
+});
+
+test('self-hosted native peephole removes multiplication by one', async () => {
+  const prefix = 'DECLARE X : INTEGER\nX ← 7\n';
+  const direct = await compileSelfHosted(prefix + 'X ← X\nOUTPUT X\n', compiler);
+  const multiplication = await compileSelfHosted(prefix + 'X ← X * 2\nOUTPUT X\n', compiler);
+  for (const expression of ['X * 1', '1 * X']) {
+    const built = await compileSelfHosted(prefix + `X ← ${expression}\nOUTPUT X\n`, compiler);
+    assert.equal(built.native, true);
+    assert.ok(built.binary.length < multiplication.binary.length);
+    assert.ok(built.binary.length <= direct.binary.length + 8, 'only the unused literal remains in the data segment');
+    assert.deepEqual((await createRuntime(built).run()).output, ['7']);
+  }
+});
+
 test('numeric arrays and record fields occupy contiguous WASM memory', async () => {
   const source = `TYPE TPoint
   DECLARE X : INTEGER

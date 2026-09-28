@@ -106,6 +106,7 @@
             <textarea id="stdin" class="tool-textarea" placeholder="Optional values, one per line…" spellcheck="false"></textarea>
             <p class="tool-hint"><code>INPUT</code> waits in the terminal when preloaded values run out.</p>
             <div class="info-card"><div class="info-card-head">Execution limit</div><div class="info-card-value">250,000 steps</div><p>Runaway loops stop automatically and report their source line.</p></div>
+            <label class="build-mode-toggle"><input id="release-build" type="checkbox"><span><strong>Release build</strong><small>Compile and Download omit step checks for native WASM. Run stays guarded.</small></span></label>
           </div>
           <div class="tool-pane" id="tool-files">
             <div class="files-header"><span class="field-label">VIRTUAL FILES</span><button id="add-file" class="tiny-button">+ New file</button></div>

@@ -25,7 +25,7 @@ async function assets() {
   return assetsPromise;
 }
 
-export async function compileSelfHostedInBrowser(source) {
+export async function compileSelfHostedInBrowser(source, options = {}) {
   const { core, assembler, native } = await assets();
-  return compileSelfHostedSource(source, core, assembler, native);
+  return compileSelfHostedSource(source, core, assembler, native, options);
 }

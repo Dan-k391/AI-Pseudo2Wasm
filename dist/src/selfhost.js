@@ -119,9 +119,9 @@ export async function assembleSelfHosted(ir, assembler, metadata = decodeSelfHos
   return { binary, strings, literalStrings, types, classes, routines };
 }
 
-export async function lowerSelfHostedNative(ir, lowerer) {
+export async function lowerSelfHostedNative(ir, lowerer, options = {}) {
   const result = await createRuntime(lowerer, {
-    inputLines: [ir.join('\n')],
+    inputLines: [(options.release ? ['M:RELEASE', ...ir] : ir).join('\n')],
     maxSteps: 20000000,
   }).run();
   if (result.status !== 'completed') throw new Error(`Native lowerer stopped with status ${result.status}`);
@@ -132,14 +132,14 @@ export async function lowerSelfHostedNative(ir, lowerer) {
   const binary = fromLatin1(binaryLine.slice(2));
   if (!WebAssembly.validate(binary)) throw new Error('Self-hosted native lowerer emitted invalid WebAssembly');
   return {
-    binary, native: true, nativeBackend: 'selfhosted', nativeLabels: result.output.filter(line => line.startsWith('L:')).map(line => line.slice(2)),
+    binary, native: true, release: !!options.release, nativeBackend: 'selfhosted', nativeLabels: result.output.filter(line => line.startsWith('L:')).map(line => line.slice(2)),
     nativeGlobalBase: Number(result.output.find(line => line.startsWith('G:'))?.slice(2) || 8),
     nativeFrameBase: Number(result.output.find(line => line.startsWith('F:'))?.slice(2) || 0),
     nativeDataEnd: Number(result.output.find(line => line.startsWith('D:'))?.slice(2) || 8),
   };
 }
 
-export async function compileSelfHostedSource(source, core, assembler, nativeLowerer = null) {
+export async function compileSelfHostedSource(source, core, assembler, nativeLowerer = null, options = {}) {
   const result = await createRuntime(core, {
     inputLines: [source.replace(/\r\n/g, '\n')],
     maxSteps: 20000000,
@@ -155,7 +155,7 @@ export async function compileSelfHostedSource(source, core, assembler, nativeLow
   }
   const metadata = decodeSelfHostedMetadata(result.output);
   if (nativeLowerer) {
-    const native = await lowerSelfHostedNative(result.output, nativeLowerer);
+    const native = await lowerSelfHostedNative(result.output, nativeLowerer, options);
     if (native) return { types: metadata.types, classes: metadata.classes, routines: metadata.routines, strings: [], literalStrings: [], ...native };
   }
   return assembleSelfHosted(result.output, assembler, metadata);

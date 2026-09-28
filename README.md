@@ -47,7 +47,7 @@ Run `npm run bootstrap` to build the pseudocode compiler, compatibility assemble
 - Arrays with explicit bounds, records, enums, sets, pointers, classes, inheritance and constructors
 - Text and random file statements with a browser-local virtual filesystem
 
-The compiler targets the [Cambridge 2026 pseudocode guide](https://www.cambridgeinternational.org/Images/697401-2026-pseudocode-guide-for-teachers.pdf). The runtime caps execution at 250,000 steps in the IDE and reports the active source line.
+The compiler targets the [Cambridge 2026 pseudocode guide](https://www.cambridgeinternational.org/Images/697401-2026-pseudocode-guide-for-teachers.pdf). Run in the IDE caps execution at 250,000 steps and reports the active source line. The optional Release build checkbox produces native WASM without step checks for Compile and Download; compatibility programs remain guarded.
 
 ## Verify
 

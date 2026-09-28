@@ -71,4 +71,8 @@ for (const entry of cases) test(`CAIE guide ${entry.section}`, async () => {
   const hostedResult = await createRuntime(selfhosted, options).run();
   assert.deepEqual(seedResult.output, entry.output);
   assert.deepEqual(hostedResult.output, entry.output);
+  const release = await compileSelfHosted(entry.source, compiler, { release: true });
+  const releaseResult = await createRuntime(release, options).run();
+  assert.deepEqual(releaseResult.output, entry.output);
+  if (!release.native) assert.equal(release.release, undefined, 'compatibility fallback retains guards');
 });

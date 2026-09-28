@@ -99,3 +99,7 @@ html,body{height:100%;overflow:hidden}.app{height:100vh;min-height:0;overflow:hi
 .reference-peek-item .peek-location{color:#8fd9cb;white-space:nowrap}
 .reference-peek-item .peek-snippet{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .reference-peek-footer{padding:7px 11px;border-top:1px solid #354b56;color:#819aa8;font-size:10px}
+.build-mode-toggle{display:flex;align-items:flex-start;gap:10px;margin-top:14px;padding:12px;border:1px solid #2a3a45;border-radius:8px;background:#192630;cursor:pointer}
+.build-mode-toggle input{margin:3px 0 0;accent-color:var(--teal)}
+.build-mode-toggle strong{display:block;color:#dbe7ef;font-size:12px}
+.build-mode-toggle small{display:block;margin-top:5px;color:#879caa;font-size:11px;line-height:1.4}

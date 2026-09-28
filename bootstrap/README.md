@@ -9,6 +9,7 @@
 ```powershell
 npm run bootstrap
 npm run selfhost:compile -- bootstrap/demo.pseudo bootstrap/build/demo.wasm
+npm run selfhost:compile -- program.pseudo program.wasm --release
 npm run selfhost:run -- bootstrap/build/demo.wasm
 npm test
 npm run build
@@ -16,6 +17,8 @@ npm run serve
 ```
 
 The compile command writes a `.wasm` and matching `.meta.json` file. Generated modules import a small `env` ABI and need `src/runtime.js` to run. They are not WASI programs. Source passes through the native self-hosted core and then the native self-hosted lowerer. The compiler stages and eligible generated programs keep scalar variables, arrays, records, control flow, routines, and `BYREF` addresses in WASM memory and stack frames. Strings live in WASM memory; concatenation creates rope nodes there, and equality compares bytes in WASM after flattening. Input, output, random values, Unicode string operations, and selected text built-ins cross to JavaScript. The native self-hosted compatibility assembler handles unsupported native constructs, including classes, files, sets, dates, and pointers, and large repeated string appends where the compatibility runtime remains faster.
+
+The optional `--release` flag asks the self-hosted native lowerer to omit per-line execution-limit checks. It still updates the current source line for errors. For programs with no routines, `INPUT`, or address-taking, eligible scalar globals stay in WASM locals during execution and are copied back to linear memory when the program finishes. The lowerer also removes multiplication by a literal one. Compatibility fallback remains guarded. The IDE's Run button always compiles guarded code; the Release build checkbox affects Compile and Download only. A release module can run indefinitely if its program loops forever.
 
 ## Implemented language
 
