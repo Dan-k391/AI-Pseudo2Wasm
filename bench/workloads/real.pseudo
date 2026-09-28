@@ -1,0 +1,100 @@
+// Each function resets its own state so repeated calls do identical work.
+DECLARE UsedColumn : ARRAY[0:11] OF BOOLEAN
+DECLARE UsedDown : ARRAY[0:23] OF BOOLEAN
+DECLARE UsedUp : ARRAY[0:23] OF BOOLEAN
+DECLARE QueenSolutions : INTEGER
+
+PROCEDURE PlaceQueen(Row : INTEGER, N : INTEGER)
+  DECLARE Column : INTEGER
+  DECLARE Down : INTEGER
+  DECLARE Up : INTEGER
+  FOR Column ← 0 TO N - 1
+    Down ← Row + Column
+    Up ← Row - Column + N - 1
+    IF NOT UsedColumn[Column] AND NOT UsedDown[Down] AND NOT UsedUp[Up] THEN
+      UsedColumn[Column] ← TRUE
+      UsedDown[Down] ← TRUE
+      UsedUp[Up] ← TRUE
+      IF Row + 1 = N THEN
+        QueenSolutions ← QueenSolutions + 1
+      ELSE
+        CALL PlaceQueen(Row + 1, N)
+      ENDIF
+      UsedColumn[Column] ← FALSE
+      UsedDown[Down] ← FALSE
+      UsedUp[Up] ← FALSE
+    ENDIF
+  NEXT Column
+ENDPROCEDURE
+
+FUNCTION NQueens(N : INTEGER) RETURNS INTEGER
+  DECLARE I : INTEGER
+  QueenSolutions ← 0
+  FOR I ← 0 TO N - 1
+    UsedColumn[I] ← FALSE
+  NEXT I
+  FOR I ← 0 TO 2 * N - 2
+    UsedDown[I] ← FALSE
+    UsedUp[I] ← FALSE
+  NEXT I
+  CALL PlaceQueen(0, N)
+  RETURN QueenSolutions
+ENDFUNCTION
+
+DECLARE Composite : ARRAY[0:99999] OF BOOLEAN
+
+FUNCTION PrimeCount(Limit : INTEGER) RETURNS INTEGER
+  DECLARE I : INTEGER
+  DECLARE J : INTEGER
+  DECLARE Count : INTEGER
+  FOR I ← 0 TO Limit - 1
+    Composite[I] ← FALSE
+  NEXT I
+  Count ← 0
+  FOR I ← 2 TO Limit - 1
+    IF NOT Composite[I] THEN
+      Count ← Count + 1
+      J ← I + I
+      WHILE J < Limit
+        Composite[J] ← TRUE
+        J ← J + I
+      ENDWHILE
+    ENDIF
+  NEXT I
+  RETURN Count
+ENDFUNCTION
+
+DECLARE MatrixA : ARRAY[0:47, 0:47] OF REAL
+DECLARE MatrixB : ARRAY[0:47, 0:47] OF REAL
+DECLARE MatrixC : ARRAY[0:47, 0:47] OF REAL
+
+FUNCTION MatMul(N : INTEGER) RETURNS REAL
+  DECLARE I : INTEGER
+  DECLARE J : INTEGER
+  DECLARE K : INTEGER
+  DECLARE Total : REAL
+  DECLARE Checksum : REAL
+  FOR I ← 0 TO N - 1
+    FOR J ← 0 TO N - 1
+      MatrixA[I, J] ← (I + J) MOD 7
+      MatrixB[I, J] ← (I * 2 + J) MOD 11
+      MatrixC[I, J] ← 0
+    NEXT J
+  NEXT I
+  FOR I ← 0 TO N - 1
+    FOR J ← 0 TO N - 1
+      Total ← 0
+      FOR K ← 0 TO N - 1
+        Total ← Total + MatrixA[I, K] * MatrixB[K, J]
+      NEXT K
+      MatrixC[I, J] ← Total
+    NEXT J
+  NEXT I
+  Checksum ← 0
+  FOR I ← 0 TO N - 1
+    Checksum ← Checksum + MatrixC[I, I]
+  NEXT I
+  RETURN Checksum
+ENDFUNCTION
+
+OUTPUT 0

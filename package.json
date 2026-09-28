@@ -10,6 +10,7 @@
     "serve": "node server.js",
     "bootstrap": "node bootstrap/bootstrap.js",
     "selfhost:compile": "node bootstrap/compile.js",
-    "selfhost:run": "node bootstrap/run.js"
+    "selfhost:run": "node bootstrap/run.js",
+    "bench:real": "node bench/real-workloads.mjs"
   }
 }

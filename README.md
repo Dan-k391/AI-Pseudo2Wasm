@@ -63,3 +63,5 @@ The compiler targets the [Cambridge 2026 pseudocode guide](https://www.cambridge
 npm test
 npm run build
 ```
+
+For cross-toolchain runtime tests, run `npm run bench:real`. The [benchmark guide](bench/README.md) documents the N queens, prime sieve, and matrix workloads, required local toolchains, flags, and comparison limits.
