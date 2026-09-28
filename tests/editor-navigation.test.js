@@ -17,6 +17,14 @@ check('finds a variable definition and its code references', () => {
   assert.deepEqual(item.references.map(x => x.line), [2, 3]);
 });
 
+check('describes declarations for hover without a complete parse', () => {
+  const source = 'DECLARE Grid : ARRAY[1:5] OF BOOLEAN\nOUTPUT Grid[2]';
+  const result = indexSource(source).describe(token(source, 'Grid', 1));
+  assert.equal(result.kind, 'declare');
+  assert.equal(result.type, 'ARRAY[1:5] OF BOOLEAN');
+  assert.equal(result.definition.line, 1);
+});
+
 check('keeps parameters and globals with the same name separate', () => {
   const source = 'DECLARE X : INTEGER\nPROCEDURE Test(X : INTEGER)\n OUTPUT X\nENDPROCEDURE\nOUTPUT X';
   const index = indexSource(source);

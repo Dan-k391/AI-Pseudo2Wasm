@@ -1,8 +1,9 @@
 import { createRuntime } from './src/runtime.js';
 import { advancedExamples } from './examples.js';
 import { compileSelfHostedInBrowser } from './selfhost.js';
-import { createDiagnosticCoordinator, diagnosticsFromError } from './compiler-diagnostics.js';
-import { completions, diagnosticRange, diagnosticAtOffset } from './editor-intelligence.js';
+import { createDiagnosticCoordinator, diagnosticsFromError, mergeDiagnostics } from './compiler-diagnostics.js';
+import { analyzeSource } from './language-service.js';
+import { completions, diagnosticRange, diagnosticAtOffset, nextDiagnostic } from './editor-intelligence.js';
 import { selectExplorerFiles, moveExplorerFiles } from './explorer-selection.js';
 import { findMatches, replaceMatches } from './editor-search.js';
 import { indexSource, renameSymbol } from './editor-navigation.js';
@@ -604,9 +605,11 @@ function diagnose(name) {
   if (!name || !Object.hasOwn(project.sourceFiles, name)) return;
   const request = diagnosticCoordinator.request(name, project.sourceFiles[name]);
   if (diagnosticWorker) { diagnosticWorker.postMessage(request); return; }
+  const editorIssues = analyzeSource(request.source);
+  diagnosticCoordinator.receive({ ...request, issues: editorIssues, partial: true });
   compileSelfHostedInBrowser(request.source).then(
-    () => diagnosticCoordinator.receive({ ...request, issues: [] }),
-    error => diagnosticCoordinator.receive({ ...request, issues: diagnosticsFromError(error, request.source) }),
+    () => diagnosticCoordinator.receive({ ...request, issues: editorIssues }),
+    error => diagnosticCoordinator.receive({ ...request, issues: mergeDiagnostics(editorIssues, diagnosticsFromError(error, request.source)) }),
   );
 }
 function log(text, kind = 'line') { consoleLines.push({ text, kind }); $('output-count').textContent = consoleLines.filter(x => x.kind === 'line').length; if (activeConsole === 'output') renderConsole(); }
@@ -677,6 +680,17 @@ function navigateTo(file, start, end = start, remember = true) {
   revealEditorRange(project.activePane, start);
   updateStatus(); updateDiagnosticAtCaret(project.activePane);
 }
+function navigateProblem(which, backwards = false) {
+  const file = project.panes[which].active;
+  if (!file) return;
+  const pane = panes[which];
+  const next = nextDiagnostic(project.sourceFiles[file] || '', problemsByFile[file] || [], pane.editor.selectionStart, backwards);
+  if (!next) { switchConsole('diagnostics'); return; }
+  hideCompletions(which);
+  setActivePane(which);
+  navigateTo(file, next.range[0], next.range[1], false);
+  switchConsole('diagnostics');
+}
 function rememberEdit(which) {
   const editor = panes[which].editor;
   panes[which].beforeEdit = { start: editor.selectionStart, end: editor.selectionEnd };
@@ -709,12 +723,15 @@ function revealEditorRange(which, start) {
   panes[which].highlight.scrollLeft = editor.scrollLeft;
   panes[which].gutter.scrollTop = editor.scrollTop;
 }
-function navigationTarget(which, offset = panes[which].editor.selectionStart) {
+function navigationIndex(which) {
   const file = project.panes[which].active;
   if (!file) return null;
   const source = project.sourceFiles[file] || '', cached = navigationIndexes.get(file);
   if (!cached || cached.source !== source) navigationIndexes.set(file, { source, index: indexSource(source) });
-  return navigationIndexes.get(file).index.at(offset);
+  return navigationIndexes.get(file).index;
+}
+function navigationTarget(which, offset = panes[which].editor.selectionStart) {
+  return navigationIndex(which)?.at(offset) || null;
 }
 function updateNavigationHover(which, event = null) {
   const pane = panes[which];
@@ -749,19 +766,33 @@ function editorPointForOffset(which, offset) {
 }
 function hideDiagnostic(which) {
   const pane = panes[which];
+  clearTimeout(pane.hoverTimer);
   pane.diagnostic.hidden = true;
   pane.diagnosticOffset = null;
   pane.diagnosticKey = null;
   if (pane.editor.getAttribute('aria-describedby') === pane.diagnostic.id) pane.editor.removeAttribute('aria-describedby');
 }
+function placeEditorTooltip(which, x, y) {
+  const pane = panes[which], tooltip = pane.diagnostic;
+  tooltip.hidden = false;
+  pane.editor.setAttribute('aria-describedby', tooltip.id);
+  pane.diagnosticAnchor = { x, y };
+  const layer = pane.editor.parentElement, lineHeight = parseFloat(getComputedStyle(pane.editor).lineHeight) || 22;
+  const below = y + 6, above = y - lineHeight - tooltip.offsetHeight - 6;
+  const top = below + tooltip.offsetHeight > layer.clientHeight - 8 ? Math.max(8, above) : below;
+  tooltip.style.top = `${Math.max(8, Math.min(top, layer.clientHeight - tooltip.offsetHeight - 8))}px`;
+  tooltip.style.left = `${Math.max(8, Math.min(x, layer.clientWidth - tooltip.offsetWidth - 8))}px`;
+}
 function showDiagnosticAtOffset(which, offset, x, y, reposition = false) {
   const pane = panes[which], file = project.panes[which].active;
   const issue = diagnosticAtOffset(project.sourceFiles[file] || '', problemsByFile[file] || [], offset);
-  if (!issue) { hideDiagnostic(which); return; }
+  if (!issue) { hideDiagnostic(which); return false; }
+  clearTimeout(pane.hoverTimer);
   const key = `${issue.line}:${issue.column}:${issue.message}`;
-  if (pane.diagnosticKey === key && !reposition) return;
+  if (pane.diagnosticKey === key && !reposition) return true;
   const tooltip = pane.diagnostic;
   if (pane.diagnosticKey !== key) {
+    tooltip.classList.remove('symbol');
     tooltip.replaceChildren();
     const heading = document.createElement('div'); heading.className = 'editor-diagnostic-heading';
     const label = document.createElement('span'); label.textContent = 'Error';
@@ -770,20 +801,35 @@ function showDiagnosticAtOffset(which, offset, x, y, reposition = false) {
     const message = document.createElement('div'); message.className = 'editor-diagnostic-message'; message.textContent = issue.message;
     tooltip.append(message);
   }
-  tooltip.hidden = false;
-  pane.editor.setAttribute('aria-describedby', tooltip.id);
   pane.diagnosticOffset = offset;
   pane.diagnosticKey = key;
-  pane.diagnosticAnchor = { x, y };
-  const layer = pane.editor.parentElement, lineHeight = parseFloat(getComputedStyle(pane.editor).lineHeight) || 22;
-  const below = y + 6, above = y - lineHeight - tooltip.offsetHeight - 6;
-  const top = below + tooltip.offsetHeight > layer.clientHeight - 8 ? Math.max(8, above) : below;
-  tooltip.style.top = `${Math.max(8, Math.min(top, layer.clientHeight - tooltip.offsetHeight - 8))}px`;
-  tooltip.style.left = `${Math.max(8, Math.min(x, layer.clientWidth - tooltip.offsetWidth - 8))}px`;
+  placeEditorTooltip(which, x, y);
+  return true;
+}
+function showSymbolAtOffset(which, offset, x, y) {
+  const pane = panes[which];
+  if (!/[A-Za-z0-9_]/.test(pane.editor.value[offset] || '')) return;
+  const symbol = navigationIndex(which)?.describe(offset);
+  if (!symbol || diagnosticAtOffset(pane.editor.value, problemsByFile[project.panes[which].active] || [], offset)) return;
+  const tooltip = pane.diagnostic;
+  tooltip.classList.add('symbol');
+  tooltip.replaceChildren();
+  const heading = document.createElement('div'); heading.className = 'editor-diagnostic-heading';
+  const label = document.createElement('span'); label.textContent = symbol.name;
+  const location = document.createElement('span'); location.className = 'editor-diagnostic-location';
+  location.textContent = `${symbol.kind} · Ln ${symbol.definition.line}`;
+  heading.append(label, location); tooltip.append(heading);
+  if (symbol.type) { const detail = document.createElement('div'); detail.className = 'editor-diagnostic-message'; detail.textContent = symbol.type; tooltip.append(detail); }
+  pane.diagnosticOffset = offset;
+  pane.diagnosticKey = `symbol:${symbol.definition.start}`;
+  placeEditorTooltip(which, x, y);
 }
 function updateDiagnosticHover(which, event) {
-  const editor = panes[which].editor, rect = editor.parentElement.getBoundingClientRect();
-  showDiagnosticAtOffset(which, editorOffsetAtPoint(which, event.clientX, event.clientY), event.clientX - rect.left + 10, event.clientY - rect.top + 10);
+  const pane = panes[which], rect = pane.editor.parentElement.getBoundingClientRect();
+  const offset = editorOffsetAtPoint(which, event.clientX, event.clientY);
+  const x = event.clientX - rect.left + 10, y = event.clientY - rect.top + 10;
+  if (!showDiagnosticAtOffset(which, offset, x, y))
+    pane.hoverTimer = setTimeout(() => showSymbolAtOffset(which, offset, x, y), 350);
 }
 function updateDiagnosticAtCaret(which) {
   const editor = panes[which].editor;
@@ -856,6 +902,7 @@ function navigateBack() {
 async function build({ release = false } = {}) {
   const name = activeName(); if (!name) { log('Open a source file before compiling.', 'error'); return null; }
   const source = activeSource(), start = performance.now();
+  const editorIssues = analyzeSource(source);
   try {
     const result = await compileSelfHostedInBrowser(source, { release });
     if (!WebAssembly.validate(result.binary)) throw new Error('Generated WebAssembly module did not validate');
@@ -864,12 +911,12 @@ async function build({ release = false } = {}) {
     lastCompiled = result; builtFile = name; builtSource = source; builtRequestedRelease = release;
     buildInfo = { name, size: result.binary.length, routines: result.routines.length, imports: WebAssembly.Module.imports(new WebAssembly.Module(result.binary)).length, native: !!result.native, release: !!result.release, ms };
     $('build-status').textContent = `${name} · succeeded`; $('build-size').textContent = `${result.binary.length.toLocaleString()} bytes · ${result.release ? 'release' : 'guarded'} · ${ms.toFixed(1)} ms`;
-    setProblems(name, []); return result;
+    setProblems(name, editorIssues); return result;
   } catch (error) {
     if (name !== activeName() || source !== activeSource()) return null;
     lastCompiled = null; builtFile = null; builtSource = null; buildInfo = null;
     $('build-status').textContent = `${name} · failed`; $('build-size').textContent = `Line ${error.line || 1}`;
-    setProblems(name, diagnosticsFromError(error, source)); switchConsole('diagnostics'); return null;
+    setProblems(name, mergeDiagnostics(editorIssues, diagnosticsFromError(error, source))); switchConsole('diagnostics'); return null;
   }
 }
 async function runProgram() {
@@ -1093,6 +1140,7 @@ for (const which of ['primary', 'secondary']) {
   });
   pane.editor.addEventListener('keydown', event => {
     const data = pane.completionData;
+    if (event.key === 'F8') { event.preventDefault(); navigateProblem(which, event.shiftKey); return; }
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') { event.preventDefault(); changeHistory(which, event.shiftKey ? 'redo' : 'undo'); return; }
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'y') { event.preventDefault(); changeHistory(which, 'redo'); return; }
     if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) { showEditorContextMenu(event, which); return; }

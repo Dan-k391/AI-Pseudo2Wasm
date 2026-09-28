@@ -42,9 +42,9 @@ export function indexSource(source) {
   const { tokens, lines } = scan(source), definitions = [], definitionAt = new Map(), context = new Map();
   let currentClass = null, currentRoutine = null;
   let nextScope = 1;
-  const define = (token, kind, scope, type = null) => {
+  const define = (token, kind, scope, type = null, displayType = null) => {
     if (!token || token.kind !== 'id') return;
-    const entry = { token, name: token.value, kind, scope, type };
+    const entry = { token, name: token.value, kind, scope, type, displayType };
     definitions.push(entry); definitionAt.set(token.start, entry);
     return entry;
   };
@@ -77,9 +77,10 @@ export function indexSource(source) {
     if (head === 'DECLARE' || head === 'CONSTANT') {
       const colon = row.findIndex(token => token.value === ':');
       const type = colon < 0 ? null : row.slice(colon + 1).filter(token => token.kind === 'id').at(-1)?.value;
+      const displayType = colon < 0 || !row[colon + 1] ? null : source.slice(row[colon + 1].start, row.at(-1).end);
       for (let i = 1; i < row.length && (colon < 0 || i < colon); i++) {
         if (row[i].kind === 'id' && (i === 1 || row[i - 1]?.value === ','))
-          define(row[i], head.toLowerCase(), currentRoutine || currentClass || 'global', type);
+          define(row[i], head.toLowerCase(), currentRoutine || currentClass || 'global', type, displayType);
       }
     }
     if (head === 'FOR' && words[1] && !definitions.some(entry => entry.name === words[1].value && entry.scope === (currentRoutine || currentClass || 'global')))
@@ -107,13 +108,19 @@ export function indexSource(source) {
       || candidates.find(entry => entry.scope === place.className)
       || candidates.find(entry => entry.scope === 'global') || null;
   };
-  const at = offset => {
+  const describe = offset => {
     const token = findToken(tokens, offset), definition = resolve(token);
     if (!definition) return null;
-    const references = tokens.filter(item => item.kind === 'id' && item.value === definition.name && resolve(item) === definition && item.start !== definition.token.start);
-    return { name: definition.name, token, definition: definition.token, kind: definition.kind, references };
+    return { name: definition.name, token, definition: definition.token, kind: definition.kind, type: definition.displayType || definition.type };
   };
-  return { at, definitions };
+  const at = offset => {
+    const result = describe(offset);
+    if (!result) return null;
+    const { token } = result, definition = definitionAt.get(result.definition.start);
+    const references = tokens.filter(item => item.kind === 'id' && item.value === definition.name && resolve(item) === definition && item.start !== definition.token.start);
+    return { ...result, references };
+  };
+  return { at, describe, definitions };
 }
 
 export function renameSymbol(source, result, newName) {

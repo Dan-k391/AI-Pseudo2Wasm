@@ -1860,11 +1860,19 @@ WHILE POSITION <= LENGTH(SOURCE)
                     ENDWHILE
                     ARG_LENGTH ← TYPE_CLOSE - START_POSITION
                     IF TYPE_CLOSE < LENGTH(ATOM) THEN
-                      INDEX_FIELD ← 1
-                      START_POSITION ← TYPE_CLOSE + 2
-                      LINE_LENGTH ← LENGTH(ATOM)
-                      FIELD_NAME ← MID(ATOM, START_POSITION, LINE_LENGTH)
-                      START_POSITION ← OPEN_INDEX + 1
+                      IF MID(ATOM, TYPE_CLOSE + 1, 1) = "." THEN
+                        INDEX_FIELD ← 1
+                        START_POSITION ← TYPE_CLOSE + 2
+                        LINE_LENGTH ← LENGTH(ATOM)
+                        FIELD_NAME ← MID(ATOM, START_POSITION, LINE_LENGTH)
+                        START_POSITION ← OPEN_INDEX + 1
+                      ELSE
+                        CANDIDATE ← MID(ATOM, TYPE_CLOSE + 1, LENGTH(ATOM))
+                        WHILE LEFT(CANDIDATE, 1) = " "
+                          CANDIDATE ← MID(CANDIDATE, 2, LENGTH(CANDIDATE))
+                        ENDWHILE
+                        OUTPUT "ERROR:" & NUM_TO_STR(SOURCE_LINE) & ":EXPR_AFTER_INDEX:" & CANDIDATE
+                      ENDIF
                     ENDIF
                   ENDIF
                   ARGUMENTS ← MID(ATOM, START_POSITION, ARG_LENGTH)

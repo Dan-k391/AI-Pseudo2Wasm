@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { compile, createRuntime } from '../src/index.js';
 import { compileSelfHosted, loadSelfHostedCompiler } from '../bootstrap/compile.js';
+import { analyzeSource } from '../web/language-service.js';
 
 const compiler = await loadSelfHostedCompiler();
 
@@ -63,6 +64,7 @@ const cases = [
 ];
 
 for (const entry of cases) test(`CAIE guide ${entry.section}`, async () => {
+  assert.deepEqual(analyzeSource(entry.source), [], `Editor diagnostics on valid section ${entry.section}`);
   const baseline = compile(entry.source);
   const selfhosted = await compileSelfHosted(entry.source, compiler);
   assert.ok(WebAssembly.validate(selfhosted.binary));

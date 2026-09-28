@@ -75,6 +75,9 @@ export function diagnosticRange(source, issue) {
   const text = lines[line - 1], base = lines.slice(0, line - 1).reduce((sum, part) => sum + part.length + 1, 0);
   if (!text.length) return null;
   const column = Math.max(0, Math.min(text.length - 1, (Number(issue.column) || 1) - 1));
+  const explicitEnd = Number(issue.endColumn);
+  if (Number.isInteger(explicitEnd) && explicitEnd > column + 1)
+    return [base + column, base + Math.min(text.length, explicitEnd - 1)];
   let start = column;
   if (/\s/.test(text[start])) start = Math.max(0, Math.min(text.search(/\S/), text.length - 1));
   if (start < 0) return null;
@@ -88,4 +91,13 @@ export function diagnosticAtOffset(source, issues, offset) {
     if (range && offset >= range[0] && offset < range[1]) return issue;
   }
   return null;
+}
+
+export function nextDiagnostic(source, issues, offset, backwards = false) {
+  const ordered = issues.map(issue => ({ issue, range: diagnosticRange(source, issue) }))
+    .filter(entry => entry.range)
+    .sort((a, b) => a.range[0] - b.range[0]);
+  if (!ordered.length) return null;
+  if (backwards) return ordered.findLast(entry => entry.range[0] < offset) || ordered.at(-1);
+  return ordered.find(entry => entry.range[0] > offset) || ordered[0];
 }

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { completions, diagnosticRange, diagnosticAtOffset } from '../web/editor-intelligence.js';
+import { completions, diagnosticRange, diagnosticAtOffset, nextDiagnostic } from '../web/editor-intelligence.js';
 
 test('completion offers keywords, builtins, and declarations', () => {
   const source = 'DECLARE Counter : INTEGER\nOUTPUT Cou';
@@ -45,4 +45,24 @@ test('diagnostic hover belongs to the underlined token, not its entire line', ()
   assert.equal(diagnosticAtOffset(source, issues, 10), null);
   assert.equal(diagnosticAtOffset(source, issues, 13), issues[1]);
   assert.equal(diagnosticAtOffset(source, issues, 3), null);
+});
+
+test('explicit diagnostic spans underline only the affected text', () => {
+  const source = 'OUTPUT arr[8] somerandomshit';
+  const bounds = { line: 1, column: 12, endColumn: 13, message: 'index' };
+  const syntax = { line: 1, column: 15, endColumn: 29, message: 'operator' };
+  assert.equal(source.slice(...diagnosticRange(source, bounds)), '8');
+  assert.equal(source.slice(...diagnosticRange(source, syntax)), 'somerandomshit');
+  assert.equal(diagnosticAtOffset(source, [bounds, syntax], source.indexOf('arr')), null);
+  assert.equal(diagnosticAtOffset(source, [bounds, syntax], source.indexOf('8')), bounds);
+});
+
+test('problem navigation wraps forward and backward through exact ranges', () => {
+  const source = 'OUTPUT arr[8] somerandomshit';
+  const issues = [{ line: 1, column: 12, endColumn: 13 }, { line: 1, column: 15, endColumn: 29 }];
+  assert.equal(nextDiagnostic(source, issues, 0).issue, issues[0]);
+  assert.equal(nextDiagnostic(source, issues, 11).issue, issues[1]);
+  assert.equal(nextDiagnostic(source, issues, 14).issue, issues[0]);
+  assert.equal(nextDiagnostic(source, issues, 14, true).issue, issues[0]);
+  assert.equal(nextDiagnostic(source, issues, 11, true).issue, issues[1]);
 });

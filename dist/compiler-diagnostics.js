@@ -20,6 +20,17 @@ export function diagnosticsFromError(error, source) {
   });
 }
 
+export function mergeDiagnostics(editorIssues, compilerIssues) {
+  const merged = [...editorIssues];
+  const positions = new Set(editorIssues.map(issue => `${issue.line}:${issue.column}`));
+  for (const issue of compilerIssues) {
+    const position = `${issue.line}:${issue.column}`;
+    if (!positions.has(position)) merged.push(issue);
+    positions.add(position);
+  }
+  return merged.sort((a, b) => a.line - b.line || a.column - b.column).slice(0, 100);
+}
+
 // A response is valid only for the exact snapshot most recently requested for
 // that file. Different files may be diagnosed concurrently.
 export function createDiagnosticCoordinator(publish) {
@@ -31,10 +42,10 @@ export function createDiagnosticCoordinator(publish) {
       pending.set(name, { id, source });
       return { id, name, source };
     },
-    receive({ id, name, source, issues, issue }) {
+    receive({ id, name, source, issues, issue, partial = false }) {
       const current = pending.get(name);
       if (!current || current.id !== id || current.source !== source) return false;
-      pending.delete(name);
+      if (!partial) pending.delete(name);
       publish(name, issues || (issue ? [issue] : []));
       return true;
     },

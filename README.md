@@ -15,7 +15,9 @@ Drag the Explorer, Program Tools, terminal, and split-editor dividers to resize 
 
 The editor supports `Ctrl+Z` undo, `Ctrl+Shift+Z` or `Ctrl+Y` redo, and an editor action menu on right-click. `Ctrl+F` opens Find; Enter and Shift+Enter move through matches while keeping Find focused. `F2` renames the symbol under the cursor and its references in the current file, with one undo step for the rename.
 
-In an editor, holding Ctrl underlines a symbol that has a definition. `Ctrl+click` jumps to its declaration and opens a references box; clicking a declaration opens the same box. `F12` jumps to the declaration, `Shift+F12` opens references, and `Alt+Left` returns to the previous location. Navigation follows routine and class scopes within the active source file; each `.pseudo` file is compiled separately.
+In an editor, holding Ctrl underlines a symbol that has a definition. `Ctrl+click` jumps to its declaration and opens a references box; clicking a declaration opens the same box. Hovering a symbol shows its declaration and type. `F12` jumps to the declaration, `Shift+F12` opens references, and `Alt+Left` returns to the previous location. Navigation follows routine and class scopes within the active source file; each `.pseudo` file is compiled separately.
+
+The editor analyzes incomplete source in a background worker and underlines exact error spans. It checks expression structure, paired blocks, and constant array indexes, then merges those findings with self-hosted compiler errors. Hover an underline for its message, open Problems to jump to it, or use `F8` and `Shift+F8` to move between problems. Static index checks cover literal and named constant indexes when array bounds are known; dynamic indexes are checked when the program runs.
 
 `INPUT` pauses at the terminal when preloaded stdin is exhausted. Type a value and press Enter to continue. The browser replays the compiled module with the supplied inputs and a fixed random seed, so earlier output and virtual file effects appear only once.
 

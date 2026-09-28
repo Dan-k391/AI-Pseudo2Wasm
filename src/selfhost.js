@@ -149,12 +149,15 @@ export async function compileSelfHostedSource(source, core, assembler, nativeLow
   const diagnostics = result.output.filter(line => line.startsWith('ERROR:')).map(record => {
     const separator = record.indexOf(':', 6);
     const line = Math.max(1, Number(record.slice(6, separator)) || 1);
-    const statement = record.slice(separator + 1);
+    const detail = record.slice(separator + 1);
+    const afterIndex = detail.startsWith('EXPR_AFTER_INDEX:');
+    const statement = afterIndex ? detail.slice('EXPR_AFTER_INDEX:'.length) : detail;
     const original = sourceLines[line - 1] || '';
     const match = original.toUpperCase().indexOf(statement.toUpperCase());
     const first = original.search(/\S/);
     const column = match >= 0 ? match + 1 : first < 0 ? 1 : first + 1;
-    const message = /^(?:ENDCASE|ENDTYPE|NEXT\b)/i.test(statement)
+    const message = afterIndex ? `Expected an operator or comma before ${statement}.`
+      : /^(?:ENDCASE|ENDTYPE|NEXT\b)/i.test(statement)
       ? `Unexpected ${statement}` : `Unrecognized or unsupported statement: ${statement}`;
     return { line, column, message };
   });

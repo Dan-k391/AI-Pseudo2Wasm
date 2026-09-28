@@ -51,6 +51,8 @@ html,body{height:100%;overflow:hidden}.app{height:100vh;min-height:0;overflow:hi
 .code-highlight .editor-error-underline{text-decoration:underline wavy #ff6d79 1.5px;text-underline-offset:4px;background:#ac303322}
 .editor-diagnostic-tooltip{position:absolute;z-index:11;pointer-events:none;width:max-content;max-width:min(390px,calc(100% - 16px));padding:10px 12px;border:1px solid #a85d67;border-radius:6px;background:#242632;box-shadow:0 14px 34px #000b;color:#f2e8e9;font:12px/1.5 var(--sans);overflow-wrap:anywhere}
 .editor-diagnostic-tooltip[hidden]{display:none}
+.editor-diagnostic-tooltip.symbol{border-color:#4d8981;color:#dcefea}
+.editor-diagnostic-tooltip.symbol .editor-diagnostic-heading{color:#80ddd0}
 .editor-diagnostic-heading{display:flex;justify-content:space-between;gap:16px;margin-bottom:5px;color:#ff9ca6;font-weight:700}
 .editor-diagnostic-location{color:#aebcc8;font:11px var(--mono);white-space:nowrap}
 .editor-diagnostic-message+.editor-diagnostic-message{margin-top:6px;padding-top:6px;border-top:1px solid #53414d}
