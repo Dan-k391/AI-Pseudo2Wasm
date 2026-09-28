@@ -19,6 +19,8 @@ In an editor, holding Ctrl underlines a symbol that has a definition. `Ctrl+clic
 
 The editor analyzes incomplete source in a background worker and underlines exact error spans. It checks expression structure, paired blocks, and constant array indexes, then merges those findings with self-hosted compiler errors. Hover an underline for its message, open Problems to jump to it, or use `F8` and `Shift+F8` to move between problems. Static index checks cover literal and named constant indexes when array bounds are known; dynamic indexes are checked when the program runs.
 
+Click a line number or press `F9` to toggle a breakpoint. **Debug** (`F5`) pauses before the first statement; Continue (`F5`) runs to the next breakpoint, Step (`F10`) executes one statement, and Stop (`Shift+F5`) ends the session. The Debug panel shows local and global variables and the call stack. Debugging uses the self-hosted compatibility WASM path and deterministic replay between pauses, so stepping deep into a long run is slower than normal Run. Source edits stop the current session; breakpoints remain saved with the workspace.
+
 `INPUT` pauses at the terminal when preloaded stdin is exhausted. Type a value and press Enter to continue. The browser replays the compiled module with the supplied inputs and a fixed random seed, so earlier output and virtual file effects appear only once.
 
 The Explorer includes runnable examples for memoized Fibonacci, the N queens backtracking problem (set `N` to change the board size), and an ASCII Minesweeper game. Minesweeper asks for an action (`R`, `F`, or `Q`), then a row and column for reveal or flag moves; enter each value in the terminal.

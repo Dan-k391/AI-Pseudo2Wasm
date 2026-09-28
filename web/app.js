@@ -41,6 +41,7 @@ function normalizeProject(raw) {
   const layout = raw?.layout || {};
   return {
     sourceFiles, fileOrder, panes: { primary: { tabs: primaryTabs, active: primaryActive }, secondary: { tabs: secondaryTabs, active: secondaryActive } },
+    breakpoints: Object.fromEntries(Object.entries(raw?.breakpoints || {}).map(([name, lines]) => [name, Array.isArray(lines) ? [...new Set(lines.filter(line => Number.isInteger(line) && line > 0))] : []])),
     activePane: raw?.activePane === 'secondary' && secondaryActive ? 'secondary' : 'primary',
     split: !!raw?.split && !!secondaryActive,
     input: String(raw?.input || ''), releaseBuild: !!raw?.releaseBuild, files: raw?.files && typeof raw.files === 'object' ? raw.files : {}, records: raw?.records && typeof raw.records === 'object' ? raw.records : {},
@@ -52,6 +53,7 @@ try { saved = JSON.parse(localStorage.getItem(STORAGE) || localStorage.getItem('
 let project = normalizeProject(saved);
 let selectedDataFile = null, lastCompiled = null, builtFile = null, builtSource = null, builtRequestedRelease = false, buildInfo = null;
 let problemsByFile = {}, activeConsole = 'output', consoleLines = [], waitingInput = null, runToken = 0, saveTimer = null, diagnoseTimer = null;
+let debugSession = null;
 let draggedFile = null;
 let selectedFiles = [], selectionAnchor = null;
 let referenceQuery = null;
@@ -267,6 +269,7 @@ function showEditorContextMenu(event, which) {
   action('Find', 'Ctrl+F', () => showSearch(which));
   action('Replace', 'Ctrl+H', () => showSearch(which, true));
   action('Toggle Line Comment', 'Ctrl+/', () => { editor.focus(); editLines(which, 'comment'); });
+  action('Toggle Breakpoint', 'F9', () => toggleBreakpoint(file, editor.value.slice(0, targetOffset).split('\n').length));
   divider();
   action('Go to Definition', 'F12', () => { editor.focus(); goToDefinition(which, targetOffset); }, !target);
   action('Find References', 'Shift+F12', () => { editor.focus(); showReferences(which, targetOffset); }, !target);
@@ -369,10 +372,15 @@ function renderCode(which) {
   const source = project.sourceFiles[name] ?? '';
   if (pane.editor.value !== source) pane.editor.value = source;
   const errors = problemsByFile[name] || [];
+  const breakpoints = new Set(project.breakpoints[name] || []);
+  const pausedLine = debugSession?.filename === name && debugSession.status === 'paused' ? debugSession.line : null;
   const searchState = pane.searchState;
   if (searchState && !pane.search.hidden) updateSearch(which, false);
   pane.highlight.innerHTML = colorize(source, errors, searchState && !pane.search.hidden ? searchState.matches : [], searchState?.current ?? -1, pane.navHover);
-  pane.gutter.innerHTML = Array.from({ length: source.split('\n').length }, (_, i) => `<div class="${errors.some(p => p.line === i + 1) ? 'error-line' : ''}">${i + 1}</div>`).join('');
+  pane.gutter.innerHTML = Array.from({ length: source.split('\n').length }, (_, i) => {
+    const line = i + 1, breakpoint = breakpoints.has(line), paused = pausedLine === line;
+    return `<div class="gutter-line${errors.some(p => p.line === line) ? ' error-line' : ''}${paused ? ' debug-line' : ''}"><button class="gutter-button${breakpoint ? ' has-breakpoint' : ''}" type="button" data-breakpoint-line="${line}" aria-label="${breakpoint ? 'Remove' : 'Add'} breakpoint at line ${line}" aria-pressed="${breakpoint}" tabindex="-1"><span class="gutter-marker">${paused ? '▶' : breakpoint ? '●' : ''}</span><span>${line}</span></button></div>`;
+  }).join('');
   pane.highlight.scrollTop = pane.editor.scrollTop; pane.highlight.scrollLeft = pane.editor.scrollLeft; pane.gutter.scrollTop = pane.editor.scrollTop;
 }
 function updateStatus() {
@@ -383,7 +391,16 @@ function updateStatus() {
   const count = source.split('\n').length; $('line-count').textContent = `${count} ${count === 1 ? 'line' : 'lines'}`;
   const problems = problemsByFile[name] || []; $('problem-count').textContent = problems.length;
   $('diagnostic-light').classList.toggle('error', problems.length > 0);
-  $('diagnostic-summary').textContent = waitingInput ? `Waiting for ${waitingInput.label} at line ${waitingInput.line}` : problems.length ? `${problems.length} problem${problems.length === 1 ? '' : 's'} in ${name}` : 'No problems';
+  $('diagnostic-summary').textContent = waitingInput ? `Waiting for ${waitingInput.label} at line ${waitingInput.line}` : debugSession?.status === 'paused' && debugSession.filename === name ? `Paused at line ${debugSession.line} · step ${debugSession.pausedStep}` : problems.length ? `${problems.length} problem${problems.length === 1 ? '' : 's'} in ${name}` : 'No problems';
+}
+function toggleBreakpoint(name, line) {
+  if (!name || !Number.isInteger(line) || line < 1) return;
+  const lines = new Set(project.breakpoints[name] || []);
+  if (lines.has(line)) lines.delete(line); else lines.add(line);
+  project.breakpoints[name] = [...lines].sort((a, b) => a - b);
+  for (const which of ['primary', 'secondary']) if (project.panes[which].active === name) renderCode(which);
+  if (activeConsole === 'debug') renderConsole();
+  scheduleSave();
 }
 function renderWorkspace() {
   for (const which of ['primary', 'secondary']) hideCompletions(which);
@@ -547,6 +564,8 @@ function renameSource(old = activeName()) {
       selectedFiles = selectedFiles.map(k => k === old ? name : k); if (selectionAnchor === old) selectionAnchor = name;
       for (const state of Object.values(project.panes)) { state.tabs = state.tabs.map(k => k === old ? name : k); if (state.active === old) state.active = name; }
       if (problemsByFile[old]) { problemsByFile[name] = problemsByFile[old]; delete problemsByFile[old]; }
+      if (project.breakpoints[old]) { project.breakpoints[name] = project.breakpoints[old]; delete project.breakpoints[old]; }
+      if (debugSession?.filename === old) debugSession.filename = name;
       diagnosticCoordinator.forget(old);
       editHistory.rename(old, name); navigationIndexes.delete(old);
       if (referenceQuery?.file === old) referenceQuery.file = name;
@@ -557,7 +576,8 @@ function renameSource(old = activeName()) {
 function removeSources(names) {
   const removing = new Set(names.filter(name => Object.hasOwn(project.sourceFiles, name)));
   if (!removing.size) return;
-  for (const name of removing) { delete project.sourceFiles[name]; delete problemsByFile[name]; diagnosticCoordinator.forget(name); editHistory.delete(name); navigationIndexes.delete(name); }
+  for (const name of removing) { delete project.sourceFiles[name]; delete project.breakpoints[name]; delete problemsByFile[name]; diagnosticCoordinator.forget(name); editHistory.delete(name); navigationIndexes.delete(name); }
+  if (removing.has(debugSession?.filename)) stopDebug();
   if (removing.has(referenceQuery?.file)) referenceQuery = null;
   project.fileOrder = project.fileOrder.filter(name => !removing.has(name));
   selectedFiles = selectedFiles.filter(name => !removing.has(name));
@@ -641,6 +661,39 @@ function renderConsole() {
         if (range) navigateTo(file, range[0], range[1]);
       });
       consoleContent.append(row);
+    }
+  } else if (activeConsole === 'debug') {
+    const toolbar = document.createElement('div'); toolbar.className = 'debug-toolbar';
+    const control = (label, title, enabled, run) => { const button = document.createElement('button'); button.type = 'button'; button.textContent = label; button.title = title; button.disabled = !enabled; button.addEventListener('click', run); toolbar.append(button); };
+    control('Start', 'Start debugging (F5)', !debugSession || ['completed', 'failed'].includes(debugSession.status), debugProgram);
+    control('Continue', 'Continue to next breakpoint (F5)', debugSession?.status === 'paused', () => resumeDebug('continue'));
+    control('Step', 'Execute one statement (F10)', debugSession?.status === 'paused', () => resumeDebug('step'));
+    control('Stop', 'Stop debugging (Shift+F5)', !!debugSession && !['completed', 'failed'].includes(debugSession.status), stopDebug);
+    consoleContent.append(toolbar);
+    const status = document.createElement('div'); status.className = 'debug-status';
+    const count = (project.breakpoints[activeName()] || []).length;
+    status.textContent = !debugSession ? `Click a line number or press F9 to set a breakpoint. ${count} breakpoint${count === 1 ? '' : 's'} in this file.`
+      : debugSession.status === 'paused' ? `${debugSession.filename} · paused before line ${debugSession.line} · step ${debugSession.pausedStep}`
+      : debugSession.status === 'completed' ? `${debugSession.filename} · completed`
+      : debugSession.status === 'failed' ? `${debugSession.filename} · ${debugSession.error}`
+      : `${debugSession.filename} · ${debugSession.status}`;
+    consoleContent.append(status);
+    if (debugSession?.state && debugSession.status === 'paused') {
+      const section = (title, entries) => {
+        const wrap = document.createElement('div'); wrap.className = 'debug-section';
+        const heading = document.createElement('h4'); heading.textContent = title; wrap.append(heading);
+        if (!entries.length) { const empty = document.createElement('div'); empty.className = 'debug-empty'; empty.textContent = 'None'; wrap.append(empty); }
+        for (const entry of entries) {
+          const row = document.createElement('div'); row.className = 'debug-variable';
+          const name = document.createElement('span'); name.className = 'debug-variable-name'; name.textContent = entry.name;
+          const value = document.createElement('span'); value.className = 'debug-variable-value'; value.textContent = `${entry.value}${entry.type ? `  · ${entry.type}` : ''}`;
+          row.append(name, value); wrap.append(row);
+        }
+        consoleContent.append(wrap);
+      };
+      section('Local variables', debugSession.state.locals);
+      section('Global variables', debugSession.state.globals);
+      section('Call stack', debugSession.state.stack.map((name, index) => ({ name: `${index + 1}. ${name}`, value: '' })));
     }
   } else if (activeConsole === 'references') {
     if (!referenceQuery || !Object.hasOwn(project.sourceFiles, referenceQuery.file)) {
@@ -920,7 +973,8 @@ async function build({ release = false } = {}) {
   }
 }
 async function runProgram() {
-  runToken++; waitingInput = null; consoleLines = []; $('output-count').textContent = '0'; switchConsole('output');
+  runToken++; waitingInput = null; debugSession = null; consoleLines = []; $('output-count').textContent = '0'; switchConsole('output');
+  renderCode('primary'); renderCode('secondary');
   const name = activeName(), source = activeSource();
   const compiled = builtFile === name && builtSource === source && !builtRequestedRelease && lastCompiled ? lastCompiled : await build();
   if (!compiled) { switchConsole('diagnostics'); return; }
@@ -928,22 +982,63 @@ async function runProgram() {
   const session = { token: runToken, filename: name, compiled, files: structuredClone(project.files), records: structuredClone(project.records || {}), inputLines: preload ? preload.split('\n') : [], printed: 0, runtimeMs: 0, seed: (Math.random() * 0x100000000) >>> 0, today: new Date().toISOString() };
   await continueRun(session);
 }
+function stopDebug() {
+  if (!debugSession) return;
+  runToken++;
+  if (waitingInput?.session === debugSession) waitingInput = null;
+  debugSession = null;
+  for (const which of ['primary', 'secondary']) renderCode(which);
+  updateStatus();
+  if (activeConsole === 'debug' || activeConsole === 'output') renderConsole();
+}
+async function debugProgram() {
+  runToken++; waitingInput = null; debugSession = null; consoleLines = []; $('output-count').textContent = '0';
+  const token = runToken, name = activeName(), source = activeSource();
+  if (!name) { showToast('Open a pseudocode file to debug.'); return; }
+  project.layout.terminalVisible = true; applyLayout(); switchConsole('debug');
+  try {
+    const compiled = await compileSelfHostedInBrowser(source, { debug: true });
+    if (token !== runToken || project.sourceFiles[name] !== source) return;
+    const preload = $('stdin').value.replace(/\r/g, '').replace(/\n$/, '');
+    debugSession = { debug: true, token, filename: name, source, compiled, files: structuredClone(project.files), records: structuredClone(project.records || {}), inputLines: preload ? preload.split('\n') : [], printed: 0, runtimeMs: 0, seed: (Math.random() * 0x100000000) >>> 0, today: new Date().toISOString(), pausedStep: 0, mode: 'step', status: 'running', state: null };
+    await continueRun(debugSession);
+  } catch (error) {
+    if (token !== runToken) return;
+    setProblems(name, diagnosticsFromError(error, source)); switchConsole('diagnostics');
+  }
+}
+function resumeDebug(mode) {
+  if (debugSession?.status !== 'paused') return;
+  debugSession.mode = mode;
+  continueRun(debugSession);
+}
 async function continueRun(session) {
   if (session.token !== runToken) return;
+  if (session.debug) { session.status = 'running'; if (activeConsole === 'debug') renderConsole(); }
   $('run-button').disabled = true; $('run-button').textContent = 'Running…';
+  $('debug-button').disabled = true;
   try {
     const start = performance.now();
-    const runtime = createRuntime(session.compiled, { inputLines: session.inputLines, files: session.files, records: session.records, interactive: true, seed: session.seed, today: session.today, maxSteps: 250000 });
+    const breakpoints = new Set(project.breakpoints[session.filename] || []);
+    const runtime = createRuntime(session.compiled, { inputLines: session.inputLines, files: session.files, records: session.records, interactive: true, seed: session.seed, today: session.today, maxSteps: 250000,
+      onStep: session.debug ? (line, step) => step > session.pausedStep && (session.mode === 'step' || breakpoints.has(line)) : undefined });
     const done = await runtime.run(); session.runtimeMs += performance.now() - start;
     if (session.token !== runToken) return;
     for (const line of done.output.slice(session.printed)) log(line);
     session.printed = done.output.length;
-    if (done.status === 'waiting') { waitingInput = { line: done.line, label: done.label, session }; project.layout.terminalVisible = true; applyLayout(); updateStatus(); switchConsole('output'); $('terminal-input')?.focus(); return; }
+    if (done.status === 'paused') {
+      session.pausedStep = done.steps; session.line = done.line; session.state = done.state; session.status = 'paused';
+      const lines = session.source.split('\n'), offset = lines.slice(0, done.line - 1).reduce((total, row) => total + row.length + 1, 0) + (lines[done.line - 1]?.search(/\S/) ?? 0);
+      navigateTo(session.filename, Math.max(0, offset), Math.max(0, offset), false);
+      updateStatus(); switchConsole('debug'); return;
+    }
+    if (done.status === 'waiting') { if (session.debug) session.status = 'waiting'; waitingInput = { line: done.line, label: done.label, session }; project.layout.terminalVisible = true; applyLayout(); updateStatus(); switchConsole('output'); $('terminal-input')?.focus(); return; }
     project.files = done.files; project.records = done.records; renderDataFiles(); save();
     log(`${session.filename} finished · ${done.steps.toLocaleString()} steps · ${session.runtimeMs.toFixed(1)} ms`, 'meta');
+    if (session.debug) { session.status = 'completed'; session.state = null; session.line = null; renderCode('primary'); renderCode('secondary'); switchConsole('debug'); }
     setProblems(session.filename, []);
-  } catch (error) { log(`${session.filename}, line ${error.line || '?'}: ${error.message}`, 'error'); setProblems(session.filename, [{ line: error.line || 1, column: error.column || 1, message: error.message }]); }
-  finally { $('run-button').disabled = false; $('run-button').innerHTML = '<span class="play-icon">▶</span> Run program'; }
+  } catch (error) { if (session.debug) { session.status = 'failed'; session.error = `line ${error.line || '?'}: ${error.message}`; switchConsole('debug'); } log(`${session.filename}, line ${error.line || '?'}: ${error.message}`, 'error'); setProblems(session.filename, [{ line: error.line || 1, column: error.column || 1, message: error.message }]); }
+  finally { $('run-button').disabled = false; $('run-button').innerHTML = '<span class="play-icon">▶</span> Run program'; $('debug-button').disabled = false; if (activeConsole === 'debug') renderConsole(); }
 }
 function downloadBlob(blob, filename) { const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = filename; document.body.append(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(link.href), 3000); }
 async function downloadWasm() { const name = activeName(), release = $('release-build').checked, compiled = builtFile === name && builtSource === activeSource() && builtRequestedRelease === release && lastCompiled ? lastCompiled : await build({ release }); if (compiled) downloadBlob(new Blob([compiled.binary], { type: 'application/wasm' }), name.replace(/\.pseudo$/i, '') + '.wasm'); }
@@ -1110,6 +1205,10 @@ function renderQuickOpen() {
 
 for (const which of ['primary', 'secondary']) {
   const pane = panes[which], empty = document.createElement('div'); empty.className = 'editor-empty'; empty.textContent = 'Open a pseudocode file from Explorer'; pane.group.append(empty);
+  pane.gutter.addEventListener('click', event => {
+    const button = event.target.closest('[data-breakpoint-line]');
+    if (button) toggleBreakpoint(project.panes[which].active, Number(button.dataset.breakpointLine));
+  });
   pane.searchState = { caseSensitive: false, wholeWord: false, regex: false, matches: [], current: -1, error: '' };
   pane.editor.addEventListener('focus', () => { hideDiagnostic(which === 'primary' ? 'secondary' : 'primary'); setActivePane(which); });
   pane.editor.addEventListener('click', event => { hideCompletions(which); updateStatus(); if ((event.ctrlKey || event.metaKey) && project.panes[which].active) goToDefinition(which, pane.editor.selectionStart, true); updateDiagnosticAtCaret(which); });
@@ -1130,6 +1229,7 @@ for (const which of ['primary', 'secondary']) {
     pane.applyingHistory = false; pane.beforeEdit = null;
     if (waitingInput?.session.filename === name) { runToken++; waitingInput = null; log('Run cancelled after source edit.', 'meta'); }
     project.sourceFiles[name] = next; if (builtFile === name) { lastCompiled = null; builtSource = null; }
+    if (debugSession?.filename === name && previous !== next) stopDebug();
     diagnosticCoordinator.forget(name); problemsByFile[name] = [];
     hideDiagnostic(which);
     hideReferencePeek(which); pane.navHover = null; pane.editor.classList.remove('navigation-ready');
@@ -1140,6 +1240,7 @@ for (const which of ['primary', 'secondary']) {
   });
   pane.editor.addEventListener('keydown', event => {
     const data = pane.completionData;
+    if (event.key === 'F9') { event.preventDefault(); toggleBreakpoint(project.panes[which].active, pane.editor.value.slice(0, pane.editor.selectionStart).split('\n').length); return; }
     if (event.key === 'F8') { event.preventDefault(); navigateProblem(which, event.shiftKey); return; }
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') { event.preventDefault(); changeHistory(which, event.shiftKey ? 'redo' : 'undo'); return; }
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'y') { event.preventDefault(); changeHistory(which, 'redo'); return; }
@@ -1195,7 +1296,7 @@ $('import-file').addEventListener('change', async event => {
   try {
     for (const file of files) {
       const content = await file.text();
-      if (file.name.toLowerCase().endsWith('.json')) { project = normalizeProject(JSON.parse(content)); selectedDataFile = null; problemsByFile = {}; lastCompiled = null; builtSource = null; builtFile = null; $('stdin').value = project.input; $('release-build').checked = project.releaseBuild; renderDataFiles(); renderWorkspace(); save(); }
+      if (file.name.toLowerCase().endsWith('.json')) { const imported = normalizeProject(JSON.parse(content)); stopDebug(); project = imported; selectedDataFile = null; problemsByFile = {}; lastCompiled = null; builtSource = null; builtFile = null; $('stdin').value = project.input; $('release-build').checked = project.releaseBuild; renderDataFiles(); renderWorkspace(); save(); }
       else if (file.name.toLowerCase().endsWith('.pseudo')) { const name = uniqueFilename(validFilename(file.name) || 'imported.pseudo'); project.sourceFiles[name] = content; openSource(name); }
       else { project.files[file.name] = content; selectedDataFile = file.name; renderDataFiles(); save(); }
     }
@@ -1207,6 +1308,7 @@ $('toggle-explorer').addEventListener('click', () => { project.layout.explorerVi
 $('toggle-tools').addEventListener('click', () => { project.layout.toolsVisible = !project.layout.toolsVisible; applyLayout(); scheduleSave(); });
 $('toggle-terminal').addEventListener('click', () => { project.layout.terminalVisible = !project.layout.terminalVisible; applyLayout(); scheduleSave(); });
 $('run-button').addEventListener('click', runProgram); $('compile-button').addEventListener('click', async () => { const result = await build({ release: $('release-build').checked }); switchConsole(result ? 'build' : 'diagnostics'); }); $('download-button').addEventListener('click', downloadWasm);
+$('debug-button').addEventListener('click', debugProgram);
 $('clear-output').addEventListener('click', () => { consoleLines = []; $('output-count').textContent = '0'; renderConsole(); });
 document.querySelectorAll('[data-console-tab]').forEach(button => button.addEventListener('click', () => switchConsole(button.dataset.consoleTab)));
 document.querySelectorAll('[data-tool]').forEach(button => button.addEventListener('click', () => switchTool(button.dataset.tool)));
@@ -1224,6 +1326,8 @@ $('quick-open-list').addEventListener('keydown', event => {
 $('quick-open').addEventListener('mousedown', event => { if (event.target === $('quick-open')) $('quick-open').hidden = true; });
 document.addEventListener('keydown', async event => {
   if (event.key === 'Escape' && !$('quick-open').hidden) { $('quick-open').hidden = true; return; }
+  if (event.key === 'F5') { event.preventDefault(); if (event.shiftKey) stopDebug(); else if (debugSession?.status === 'paused') resumeDebug('continue'); else if (!debugSession || ['completed', 'failed'].includes(debugSession.status)) debugProgram(); return; }
+  if (event.key === 'F10') { event.preventDefault(); if (debugSession?.status === 'paused') resumeDebug('step'); else if (!debugSession || ['completed', 'failed'].includes(debugSession.status)) debugProgram(); return; }
   if (!(event.ctrlKey || event.metaKey)) return;
   if (event.key === 'Enter') { event.preventDefault(); runProgram(); }
   else if (event.shiftKey && event.key.toLowerCase() === 'b') { event.preventDefault(); const result = await build({ release: $('release-build').checked }); switchConsole(result ? 'build' : 'diagnostics'); }

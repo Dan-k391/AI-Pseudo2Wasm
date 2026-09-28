@@ -168,7 +168,7 @@ export async function compileSelfHostedSource(source, core, assembler, nativeLow
     throw error;
   }
   const metadata = decodeSelfHostedMetadata(result.output);
-  if (nativeLowerer) {
+  if (nativeLowerer && !options.debug) {
     const native = await lowerSelfHostedNative(result.output, nativeLowerer, options);
     if (native) return { types: metadata.types, classes: metadata.classes, routines: metadata.routines, strings: [], literalStrings: [], ...native };
   }

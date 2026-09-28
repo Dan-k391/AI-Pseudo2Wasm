@@ -7,6 +7,10 @@ class InputRequired extends Error {
   constructor(label, line) { super(`Input required for ${label}`); this.name = 'InputRequired'; this.label = label; this.line = line; }
 }
 
+class DebugPause extends Error {
+  constructor(line, steps, state) { super('Paused'); this.line = line; this.steps = steps; this.state = state; }
+}
+
 const scalar = value => value && value.__enum ? value.name : value instanceof MemoryString ? value.toString() : value;
 const isNumber = value => typeof value === 'number' && Number.isFinite(value);
 function show(value) {
@@ -50,6 +54,26 @@ export function createRuntime(compiled, options = {}) {
   const random = () => { randomState ^= randomState << 13; randomState ^= randomState >>> 17; randomState ^= randomState << 5; return (randomState >>> 0) / 0x100000000; };
   const today = options.today ? new Date(options.today) : new Date();
   const maxSteps = options.maxSteps ?? 250000;
+  const preview = (value, depth = 0) => {
+    if (value instanceof MemoryString) return JSON.stringify(value.toString());
+    if (value === null || value === undefined) return 'NULL';
+    if (typeof value === 'string') return JSON.stringify(value);
+    if (typeof value !== 'object') return show(value);
+    if (value instanceof Date || value instanceof Set || value.__enum) return show(value);
+    if (depth >= 2) return value.__array ? '[…]' : '{…}';
+    if (value.__array) {
+      const sample = value.data.slice(0, 8).map(item => preview(item, depth + 1));
+      return `[${sample.join(', ')}${value.data.length > sample.length ? ', …' : ''}]`;
+    }
+    const fields = value.__object ? value.fields : value;
+    const entries = Object.entries(fields).slice(0, 8).map(([key, item]) => `${key}: ${preview(item && typeof item === 'object' && Object.hasOwn(item, 'value') ? item.value : item, depth + 1)}`);
+    return `${value.__object ? value.__class + ' ' : ''}{${entries.join(', ')}${Object.keys(fields).length > entries.length ? ', …' : ''}}`;
+  };
+  const debugState = () => {
+    const variables = scope => [...scope.entries()].filter(([name]) => !name.startsWith('$')).slice(0, 80)
+      .map(([name, slot]) => ({ name, value: preview(slot.value), type: slot.type?.name || slot.type?.kind || '' }));
+    return { globals: variables(globals), locals: scopes.length > 1 ? variables(scopes.at(-1)) : [], stack: frames.filter((_, index) => index % 2 === 0).map(frame => frame.name) };
+  };
   const name = i => strings[i];
   const fail = message => { throw new PseudoError(message, line, 1); };
   const parseType = i => { try { return JSON.parse(name(i)); } catch { return { kind: 'named', name: name(i) }; } };
@@ -254,7 +278,11 @@ export function createRuntime(compiled, options = {}) {
     type.values.forEach((item, ordinal) => bind(globals, item, { type: { kind: 'enum', values: type.values }, value: { __enum: true, typeName, name: item, ordinal }, constant: true }));
   }
   const env = {
-    tick(n) { line = n; if (++steps > maxSteps) fail(`Execution limit (${maxSteps.toLocaleString()} steps) reached`); },
+    tick(n) {
+      line = n;
+      if (++steps > maxSteps) fail(`Execution limit (${maxSteps.toLocaleString()} steps) reached`);
+      if (options.onStep?.(line, steps)) throw new DebugPause(line, steps, debugState());
+    },
     num: n => n, str: i => stringMemory.literal(i) || text(name(i)), bool: n => !!n,
     get: i => read(cellById(i)), set: (i, v) => write(cellById(i), v),
     declare(i, typeId, value) {
@@ -390,6 +418,10 @@ export function createRuntime(compiled, options = {}) {
         cellMemory.syncAll();
         return { status: 'completed', output: [...output], files: { ...files }, records: stringMemory.plain(records), steps, binary: compiled.binary, memory: stringMemory.memory, stringBytes: stringMemory.top };
       } catch (error) {
+        if (error instanceof DebugPause) {
+          cellMemory?.syncAll();
+          return { status: 'paused', output: [...output], files: { ...files }, records: stringMemory.plain(records), steps: error.steps, line: error.line, state: error.state, binary: compiled.binary };
+        }
         if (error instanceof InputRequired) {
           cellMemory?.syncAll();
           return { status: 'waiting', output: [...output], files: { ...files }, records: stringMemory.plain(records), steps, line: error.line, label: error.label, binary: compiled.binary };
