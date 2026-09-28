@@ -13,8 +13,8 @@ const app = document.querySelector('.app');
 const consoleContent = $('console-content');
 const STORAGE = 'pseudo2wasm.project.v2';
 const panes = {
-  primary: { group: $('primary-group'), tabs: $('primary-tabs'), editor: $('primary-editor'), highlight: $('primary-highlight'), gutter: $('primary-gutter'), completion: $('primary-completion'), search: $('primary-search'), searchInput: $('primary-search-input'), replaceInput: $('primary-replace-input'), peek: $('primary-reference-peek') },
-  secondary: { group: $('secondary-group'), tabs: $('secondary-tabs'), editor: $('secondary-editor'), highlight: $('secondary-highlight'), gutter: $('secondary-gutter'), completion: $('secondary-completion'), search: $('secondary-search'), searchInput: $('secondary-search-input'), replaceInput: $('secondary-replace-input'), peek: $('secondary-reference-peek') },
+  primary: { group: $('primary-group'), tabs: $('primary-tabs'), editor: $('primary-editor'), highlight: $('primary-highlight'), gutter: $('primary-gutter'), completion: $('primary-completion'), search: $('primary-search'), searchInput: $('primary-search-input'), replaceInput: $('primary-replace-input'), peek: $('primary-reference-peek'), diagnostic: $('primary-diagnostic-tooltip') },
+  secondary: { group: $('secondary-group'), tabs: $('secondary-tabs'), editor: $('secondary-editor'), highlight: $('secondary-highlight'), gutter: $('secondary-gutter'), completion: $('secondary-completion'), search: $('secondary-search'), searchInput: $('secondary-search-input'), replaceInput: $('secondary-replace-input'), peek: $('secondary-reference-peek'), diagnostic: $('secondary-diagnostic-tooltip') },
 };
 const examples = [
   { name: 'Hello world', filename: 'hello-world.pseudo', code: `// Your first CAIE pseudocode program\nDECLARE Name : STRING\nOUTPUT "What is your name?"\nINPUT Name\nOUTPUT "Hello, ", Name, "!"\n` },
@@ -362,7 +362,7 @@ function renderTabs(which) {
 }
 function renderCode(which) {
   const pane = panes[which], name = project.panes[which].active;
-  if (pane.renderedFile !== name) { pane.renderedFile = name; pane.navHover = null; pane.peek.hidden = true; pane.editor.classList.remove('navigation-ready'); }
+  if (pane.renderedFile !== name) { pane.renderedFile = name; pane.navHover = null; pane.peek.hidden = true; hideDiagnostic(which); pane.editor.classList.remove('navigation-ready'); }
   pane.group.classList.toggle('empty', !name);
   if (!name) { pane.editor.value = ''; pane.highlight.textContent = ''; pane.gutter.textContent = ''; return; }
   const source = project.sourceFiles[name] ?? '';
@@ -580,7 +580,12 @@ function deleteSources(names) {
 }
 function setProblems(name, items) {
   if (name) problemsByFile[name] = items;
-  for (const id of ['primary', 'secondary']) if (project.panes[id].active === name) renderCode(id);
+  for (const id of ['primary', 'secondary']) if (project.panes[id].active === name) {
+    renderCode(id);
+    const pane = panes[id];
+    if (pane.diagnosticLine && !pane.diagnostic.hidden) showDiagnostic(id, pane.diagnosticLine, pane.diagnosticAnchor.x, pane.diagnosticAnchor.y, true);
+    else if (document.activeElement === pane.editor) updateDiagnosticAtCaret(id);
+  }
   updateStatus(); if (activeConsole === 'diagnostics') renderConsole();
 }
 function diagnose(name) {
@@ -645,7 +650,7 @@ function navigateTo(file, start, end = start, remember = true) {
   const editor = panes[project.activePane].editor;
   editor.setSelectionRange(start, end);
   revealEditorRange(project.activePane, start);
-  updateStatus();
+  updateStatus(); updateDiagnosticAtCaret(project.activePane);
 }
 function rememberEdit(which) {
   const editor = panes[which].editor;
@@ -716,6 +721,55 @@ function editorPointForOffset(which, offset) {
   const cell = context.measureText('M').width || 8;
   let display = 0; for (const char of lines.at(-1)) display += char === '\t' ? 2 - display % 2 : 1;
   return { x: (parseFloat(style.paddingLeft) || 0) + display * cell - editor.scrollLeft, y: (parseFloat(style.paddingTop) || 0) + (lines.length - 1) * (parseFloat(style.lineHeight) || 22) - editor.scrollTop };
+}
+function hideDiagnostic(which) {
+  const pane = panes[which];
+  pane.diagnostic.hidden = true;
+  pane.diagnosticLine = null;
+  pane.diagnosticKey = null;
+  if (pane.editor.getAttribute('aria-describedby') === pane.diagnostic.id) pane.editor.removeAttribute('aria-describedby');
+}
+function showDiagnostic(which, line, x, y, reposition = false) {
+  const pane = panes[which], file = project.panes[which].active;
+  const issues = (problemsByFile[file] || []).filter(issue => Number(issue.line) === line);
+  if (!issues.length) { hideDiagnostic(which); return; }
+  const key = issues.map(issue => `${issue.column}:${issue.message}`).join('\n');
+  if (pane.diagnosticLine === line && pane.diagnosticKey === key && !reposition) return;
+  const tooltip = pane.diagnostic;
+  if (pane.diagnosticLine !== line || pane.diagnosticKey !== key) {
+    tooltip.replaceChildren();
+    const heading = document.createElement('div'); heading.className = 'editor-diagnostic-heading';
+    const label = document.createElement('span'); label.textContent = issues.length === 1 ? 'Error' : `${issues.length} errors`;
+    const location = document.createElement('span'); location.className = 'editor-diagnostic-location'; location.textContent = `Ln ${line}, Col ${issues[0].column || 1}`;
+    heading.append(label, location); tooltip.append(heading);
+    for (const issue of issues) {
+      const message = document.createElement('div'); message.className = 'editor-diagnostic-message'; message.textContent = issue.message;
+      tooltip.append(message);
+    }
+  }
+  tooltip.hidden = false;
+  pane.editor.setAttribute('aria-describedby', tooltip.id);
+  pane.diagnosticLine = line;
+  pane.diagnosticKey = key;
+  pane.diagnosticAnchor = { x, y };
+  const layer = pane.editor.parentElement, lineHeight = parseFloat(getComputedStyle(pane.editor).lineHeight) || 22;
+  const below = y + 6, above = y - lineHeight - tooltip.offsetHeight - 6;
+  const top = below + tooltip.offsetHeight > layer.clientHeight - 8 ? Math.max(8, above) : below;
+  tooltip.style.top = `${Math.max(8, Math.min(top, layer.clientHeight - tooltip.offsetHeight - 8))}px`;
+  tooltip.style.left = `${Math.max(8, Math.min(x, layer.clientWidth - tooltip.offsetWidth - 8))}px`;
+}
+function updateDiagnosticHover(which, event) {
+  const pane = panes[which], editor = pane.editor, rect = editor.getBoundingClientRect(), style = getComputedStyle(editor);
+  const lineHeight = parseFloat(style.lineHeight) || 22;
+  const line = Math.floor((event.clientY - rect.top + editor.scrollTop - (parseFloat(style.paddingTop) || 0)) / lineHeight) + 1;
+  const layerRect = editor.parentElement.getBoundingClientRect();
+  showDiagnostic(which, line, event.clientX - layerRect.left + 10, (parseFloat(style.paddingTop) || 0) + line * lineHeight - editor.scrollTop);
+}
+function updateDiagnosticAtCaret(which) {
+  const editor = panes[which].editor;
+  const line = editor.value.slice(0, editor.selectionStart).split('\n').length;
+  const point = editorPointForOffset(which, editor.selectionStart);
+  showDiagnostic(which, line, point.x, point.y + (parseFloat(getComputedStyle(editor).lineHeight) || 22), true);
 }
 function hideReferencePeek(which) { panes[which].peek.hidden = true; }
 function showReferencePeek(which, result, offset = result.token.start) {
@@ -990,18 +1044,18 @@ function renderQuickOpen() {
 for (const which of ['primary', 'secondary']) {
   const pane = panes[which], empty = document.createElement('div'); empty.className = 'editor-empty'; empty.textContent = 'Open a pseudocode file from Explorer'; pane.group.append(empty);
   pane.searchState = { caseSensitive: false, wholeWord: false, regex: false, matches: [], current: -1, error: '' };
-  pane.editor.addEventListener('focus', () => setActivePane(which));
-  pane.editor.addEventListener('click', event => { hideCompletions(which); updateStatus(); if ((event.ctrlKey || event.metaKey) && project.panes[which].active) goToDefinition(which, pane.editor.selectionStart, true); });
-  pane.editor.addEventListener('mousemove', event => updateNavigationHover(which, event));
-  pane.editor.addEventListener('mouseleave', () => updateNavigationHover(which));
-  pane.editor.addEventListener('keyup', event => { updateStatus(); if (event.key === 'Control' || event.key === 'Meta') updateNavigationHover(which); });
+  pane.editor.addEventListener('focus', () => { hideDiagnostic(which === 'primary' ? 'secondary' : 'primary'); setActivePane(which); });
+  pane.editor.addEventListener('click', event => { hideCompletions(which); updateStatus(); if ((event.ctrlKey || event.metaKey) && project.panes[which].active) goToDefinition(which, pane.editor.selectionStart, true); updateDiagnosticAtCaret(which); });
+  pane.editor.addEventListener('mousemove', event => { updateNavigationHover(which, event); updateDiagnosticHover(which, event); });
+  pane.editor.addEventListener('mouseleave', () => { updateNavigationHover(which); hideDiagnostic(which); });
+  pane.editor.addEventListener('keyup', event => { updateStatus(); if (event.key === 'Control' || event.key === 'Meta') updateNavigationHover(which); if (/^(Arrow|Home$|End$|Page)/.test(event.key)) updateDiagnosticAtCaret(which); else if (event.key === 'Escape') hideDiagnostic(which); });
   pane.editor.addEventListener('contextmenu', event => showEditorContextMenu(event, which));
   pane.editor.addEventListener('beforeinput', event => {
     if (event.inputType === 'historyUndo' || event.inputType === 'historyRedo') { event.preventDefault(); changeHistory(which, event.inputType === 'historyUndo' ? 'undo' : 'redo'); }
     else rememberEdit(which);
   });
-  pane.editor.addEventListener('blur', event => { if (!pane.completion.contains(event.relatedTarget)) hideCompletions(which); });
-  pane.editor.addEventListener('scroll', () => { pane.highlight.scrollTop = pane.editor.scrollTop; pane.highlight.scrollLeft = pane.editor.scrollLeft; pane.gutter.scrollTop = pane.editor.scrollTop; hideCompletions(which); hideReferencePeek(which); });
+  pane.editor.addEventListener('blur', event => { if (!pane.completion.contains(event.relatedTarget)) hideCompletions(which); hideDiagnostic(which); });
+  pane.editor.addEventListener('scroll', () => { pane.highlight.scrollTop = pane.editor.scrollTop; pane.highlight.scrollLeft = pane.editor.scrollLeft; pane.gutter.scrollTop = pane.editor.scrollTop; hideCompletions(which); hideReferencePeek(which); hideDiagnostic(which); });
   pane.editor.addEventListener('input', event => {
     const name = project.panes[which].active; if (!name) return;
     const previous = project.sourceFiles[name], next = pane.editor.value;
@@ -1009,6 +1063,7 @@ for (const which of ['primary', 'secondary']) {
     pane.applyingHistory = false; pane.beforeEdit = null;
     if (waitingInput?.session.filename === name) { runToken++; waitingInput = null; log('Run cancelled after source edit.', 'meta'); }
     project.sourceFiles[name] = next; if (builtFile === name) { lastCompiled = null; builtSource = null; }
+    hideDiagnostic(which);
     hideReferencePeek(which); pane.navHover = null; pane.editor.classList.remove('navigation-ready');
     renderCode(which); renderCode(which === 'primary' ? 'secondary' : 'primary'); updateStatus(); scheduleSave();
     if (activeConsole === 'references' && referenceQuery?.file === name) renderConsole();
@@ -1105,7 +1160,7 @@ document.addEventListener('keydown', async event => {
   else if (event.key.toLowerCase() === 'p') { event.preventDefault(); quickOpen(); }
   else if (event.key.toLowerCase() === 'f') { event.preventDefault(); showSearch(project.activePane); }
   else if (event.key.toLowerCase() === 'h') { event.preventDefault(); showSearch(project.activePane, true); }
-  else if (event.key.toLowerCase() === 'g') { event.preventDefault(); showWorkspaceDialog({ title: 'Go to line', label: 'Line number', value: '1', submitLabel: 'Go', validate: value => !/^\d+$/.test(value) || Number(value) < 1 || Number(value) > panes[project.activePane].editor.value.split('\n').length ? 'Enter a line number in the current file.' : null, onSubmit: value => { const editor = panes[project.activePane].editor; const position = editor.value.split('\n').slice(0, Number(value) - 1).reduce((sum, line) => sum + line.length + 1, 0); editor.focus(); editor.setSelectionRange(position, position); updateStatus(); } }); }
+  else if (event.key.toLowerCase() === 'g') { event.preventDefault(); showWorkspaceDialog({ title: 'Go to line', label: 'Line number', value: '1', submitLabel: 'Go', validate: value => !/^\d+$/.test(value) || Number(value) < 1 || Number(value) > panes[project.activePane].editor.value.split('\n').length ? 'Enter a line number in the current file.' : null, onSubmit: value => { const editor = panes[project.activePane].editor; const position = editor.value.split('\n').slice(0, Number(value) - 1).reduce((sum, line) => sum + line.length + 1, 0); editor.focus(); editor.setSelectionRange(position, position); updateStatus(); updateDiagnosticAtCaret(project.activePane); } }); }
   else if (event.key === '\\') { event.preventDefault(); splitEditor(); }
   else if (event.key.toLowerCase() === 'w') { event.preventDefault(); if (activeName()) closeTab(project.activePane, activeName()); }
   else if (event.key === 'Tab') { event.preventDefault(); const state = project.panes[project.activePane]; if (state.tabs.length) { const index = state.tabs.indexOf(state.active), offset = event.shiftKey ? -1 : 1; openSource(state.tabs[(index + offset + state.tabs.length) % state.tabs.length]); } }
