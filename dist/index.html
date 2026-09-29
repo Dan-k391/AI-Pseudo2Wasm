@@ -146,6 +146,8 @@ html,body{height:100%;overflow:hidden}.app{height:100vh;min-height:0;overflow:hi
 .optimization-control{display:block;margin-top:14px;padding:12px;border:1px solid #2a3a45;border-radius:8px;background:#192630;color:#dbe7ef;font-size:12px;font-weight:700}
 .optimization-control select{display:block;width:100%;margin-top:8px;padding:7px 9px;border:1px solid #3d716e;border-radius:6px;background:#0f1720;color:#dbe7ef;font:12px var(--sans)}
 .optimization-control small{display:block;margin-top:7px;color:#879caa;font-size:11px;font-weight:400;line-height:1.4}
+#active-file-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.editor-controls #shortcut-mode.shortcut-mode-active{background:#24443e;color:var(--teal)}
 
 </style>
   <style data-bundled="themes">
@@ -321,7 +323,7 @@ html[data-theme]:not([data-theme="pseudo"]) .workspace-toast{background:var(--th
         <button id="import-button" class="button button-subtle" title="Open pseudocode files or a project JSON">Open</button>
         <input id="import-file" type="file" accept=".pseudo,.txt,.json" multiple hidden>
         <button id="download-button" class="button button-subtle" title="Download compiled WebAssembly">Download .wasm</button>
-        <button id="compile-button" class="button button-outline" title="Compile (Ctrl+Shift+B)">Compile</button>
+        <button id="compile-button" class="button button-outline" title="Compile (Alt+Shift+B)">Compile</button>
         <button id="debug-button" class="button button-outline" title="Start debugging (F5)">Debug</button>
         <button id="run-button" class="button button-primary" title="Run (Ctrl+Enter)"><span class="play-icon">▶</span> Run program</button>
       </div>
@@ -351,7 +353,7 @@ html[data-theme]:not([data-theme="pseudo"]) .workspace-toast{background:var(--th
 
       <main class="main-panel">
         <div class="editor-surface">
-          <div class="editor-controls"><span id="active-file-label">main.pseudo</span><span class="editor-controls-spacer"></span><button id="split-editor" title="Split editor (Ctrl+\\)" aria-label="Split editor">▥ Split editor</button><button id="close-split" title="Close split editor" aria-label="Close split editor" hidden>×</button></div>
+          <div class="editor-controls"><span id="active-file-label">main.pseudo</span><span class="editor-controls-spacer"></span><button id="shortcut-mode" type="button" title="Capture browser shortcuts in fullscreen when supported" aria-pressed="false">⛶ Fullscreen keys</button><button id="split-editor" title="Split editor (Ctrl+\\)" aria-label="Split editor">▥ Split editor</button><button id="close-split" title="Close split editor" aria-label="Close split editor" hidden>×</button></div>
           <div id="editor-area" class="editor-area">
             <section id="primary-group" class="editor-group active-group" aria-label="Primary editor">
               <div id="primary-tabs" class="editor-tabs" role="tablist" aria-label="Open files in primary editor"></div>
@@ -418,7 +420,7 @@ html[data-theme]:not([data-theme="pseudo"]) .workspace-toast{background:var(--th
             <div class="reference-group"><h3>Control flow</h3><code>IF … THEN / ELSE / ENDIF<br>CASE OF … / ENDCASE<br>FOR … TO … STEP … / NEXT<br>WHILE … / ENDWHILE<br>REPEAT … UNTIL …</code></div>
             <div class="reference-group"><h3>Data &amp; routines</h3><code>ARRAY[1:5] OF INTEGER<br>TYPE … ENDTYPE<br>SET OF CHAR<br>FUNCTION … RETURNS …<br>PROCEDURE … / BYREF</code></div>
             <div class="reference-group"><h3>Files &amp; classes</h3><code>OPENFILE … FOR READ<br>READFILE … / WRITEFILE …<br>CLASS … ENDCLASS<br>NEW ClassName(…)</code></div>
-            <div class="reference-group"><h3>Editor shortcuts</h3><code>Tab accept suggestion · Ctrl+Space suggest<br>Ctrl+P open file · Ctrl+F find · Ctrl+H replace<br>Ctrl+Z undo · Ctrl+Shift+Z redo<br>F5 debug/continue · F10 step · F9 breakpoint<br>Shift+F5 stop · F8/Shift+F8 problems<br>F12 go to definition · Ctrl+click peek references<br>Shift+F12 find references · F2 rename symbol<br>Alt+← go back · Ctrl+G go to line<br>Ctrl+/ comment · Alt+↑/↓ move line<br>Ctrl+Shift+K delete line · Ctrl+Tab switch tabs<br>Ctrl+W close tab · Middle-click a tab to close it<br><br>Browser-safe alternatives:<br>Alt+Shift+G line · Alt+Shift+H replace<br>Alt+Shift+F find · Alt+Shift+P open file<br>Alt+Shift+W close tab · Alt+PageUp/Down switch tabs<br>Alt+Shift+B compile · Alt+Shift+L save<br>Alt+Shift+D debug/continue · Alt+Shift+S step<br>Alt+Shift+X stop</code></div>
+            <div class="reference-group"><h3>Editor shortcuts</h3><code>Tab accept suggestion · Ctrl+Space suggest<br>Ctrl+Z undo · Ctrl+Shift+Z redo<br>F5 debug/continue · F10 step · F9 breakpoint<br>Shift+F5 stop · F8/Shift+F8 problems<br>F12 go to definition · Ctrl+click peek references<br>Shift+F12 find references · F2 rename symbol<br>Alt+← go back · Ctrl+/ comment<br>Alt+↑/↓ move line · Ctrl+Shift+K delete line<br>Middle-click a tab to close it<br><br>Works in a normal browser tab:<br>Alt+Shift+G line · Alt+Shift+H replace<br>Alt+Shift+F find · Alt+Shift+P open file<br>Alt+Shift+W close tab · Alt+PageUp/Down switch tabs<br>Alt+Shift+B compile · Alt+Shift+L save<br>Alt+Shift+D debug/continue · Alt+Shift+S step<br>Alt+Shift+X stop<br><br>Click Fullscreen keys to capture browser shortcuts when supported. Then Ctrl+W closes an IDE tab, Ctrl+Tab switches IDE tabs, and Ctrl+P/F/H/G/S work in the IDE. The browser may request permission. Esc exits fullscreen.</code></div>
             <a class="guide-link" href="https://www.cambridgeinternational.org/Images/697401-2026-pseudocode-guide-for-teachers.pdf" target="_blank" rel="noopener">Cambridge 2026 pseudocode guide ↗</a>
           </div>
         </div>
@@ -2987,8 +2989,8 @@ function showEditorContextMenu(event, which) {
   });
   action('Select All', 'Ctrl+A', () => { editor.focus(); editor.select(); });
   divider();
-  action('Find', 'Ctrl+F', () => showSearch(which));
-  action('Replace', 'Ctrl+H', () => showSearch(which, true));
+  action('Find', 'Alt+Shift+F', () => showSearch(which));
+  action('Replace', 'Alt+Shift+H', () => showSearch(which, true));
   action('Go to Line', 'Alt+Shift+G', () => goToLine(which));
   action('Toggle Line Comment', 'Ctrl+/', () => { editor.focus(); editLines(which, 'comment'); });
   action('Toggle Breakpoint', 'F9', () => toggleBreakpoint(file, editor.value.slice(0, targetOffset).split('\n').length));
@@ -3075,7 +3077,7 @@ function renderTabs(which) {
     const tab = document.createElement('div'); tab.className = `source-tab${state.active === name ? ' active' : ''}`; tab.setAttribute('role', 'tab'); tab.setAttribute('aria-selected', String(state.active === name)); tab.tabIndex = 0; tab.title = `Drag to reorder or move ${name} to another editor`; tab.draggable = true; tab.dataset.file = name;
     const glyph = document.createElement('span'); glyph.className = 'file-glyph'; glyph.textContent = '◇';
     const label = document.createElement('span'); label.className = 'source-tab-name'; label.textContent = name;
-    const close = document.createElement('button'); close.className = 'tab-close'; close.type = 'button'; close.setAttribute('aria-label', `Close ${name} in ${which} editor`); close.textContent = '×';
+    const close = document.createElement('button'); close.className = 'tab-close'; close.type = 'button'; close.setAttribute('aria-label', `Close ${name} in ${which} editor`); close.title = 'Close IDE tab (Alt+Shift+W when active, or middle-click)'; close.textContent = '×';
     close.addEventListener('click', event => { event.stopPropagation(); closeTab(which, name); });
     tab.addEventListener('auxclick', event => { if (event.button === 1) { event.preventDefault(); event.stopPropagation(); closeTab(which, name); } });
     tab.addEventListener('mousedown', event => { if (event.button === 1) event.preventDefault(); });
@@ -3953,6 +3955,43 @@ function cycleEditorTab(direction) {
   const index = state.tabs.indexOf(state.active);
   openSource(state.tabs[(index + direction + state.tabs.length) % state.tabs.length], which);
 }
+const browserShortcutCodes = ['KeyW', 'Tab', 'KeyP', 'KeyF', 'KeyH', 'KeyG', 'KeyS', 'KeyB', 'Backslash', 'ArrowLeft'];
+let browserKeysCaptured = false;
+function updateShortcutModeButton() {
+  const button = $('shortcut-mode'), active = !!document.fullscreenElement && browserKeysCaptured;
+  button.textContent = active ? '⛶ Exit fullscreen keys' : '⛶ Fullscreen keys';
+  button.title = active ? 'Exit fullscreen and release browser shortcuts (Esc)' : 'Capture browser shortcuts in fullscreen when supported';
+  button.setAttribute('aria-pressed', String(active));
+  button.classList.toggle('shortcut-mode-active', active);
+}
+async function toggleShortcutMode() {
+  if (document.fullscreenElement) { await document.exitFullscreen(); return; }
+  if (!document.fullscreenEnabled || typeof document.documentElement.requestFullscreen !== 'function' || typeof navigator.keyboard?.lock !== 'function') {
+    showToast('This browser cannot capture its shortcuts. Use Alt+Shift+W to close an IDE tab and Alt+PageUp/Down to switch tabs.');
+    return;
+  }
+  const button = $('shortcut-mode');
+  button.disabled = true;
+  try {
+    await document.documentElement.requestFullscreen();
+    await navigator.keyboard.lock(browserShortcutCodes);
+    if (!document.fullscreenElement) throw new Error('Fullscreen ended before shortcut capture.');
+    browserKeysCaptured = true;
+    updateShortcutModeButton();
+  } catch {
+    browserKeysCaptured = false;
+    try { navigator.keyboard?.unlock?.(); } catch {}
+    if (document.fullscreenElement) { try { await document.exitFullscreen(); } catch {} }
+    updateShortcutModeButton();
+    showToast('The browser did not allow shortcut capture. Use Alt+Shift+W and Alt+PageUp/Down instead.');
+  } finally {
+    button.disabled = false;
+  }
+}
+document.addEventListener('fullscreenchange', () => {
+  if (!document.fullscreenElement) { browserKeysCaptured = false; try { navigator.keyboard?.unlock?.(); } catch {} }
+  updateShortcutModeButton();
+});
 function renderQuickOpen() {
   const query = $('quick-open-input').value.toLowerCase(), list = $('quick-open-list'); list.replaceChildren();
   for (const name of project.fileOrder.filter(name => name.toLowerCase().includes(query)).slice(0, 12)) {
@@ -4096,6 +4135,7 @@ $('import-file').addEventListener('change', async event => {
   event.target.value = '';
 });
 $('split-editor').addEventListener('click', splitEditor); $('close-split').addEventListener('click', closeSplit);
+$('shortcut-mode').addEventListener('click', toggleShortcutMode);
 $('theme-select').addEventListener('change', event => { project.theme = THEMES.has(event.target.value) ? event.target.value : 'pseudo'; applyTheme(); save(); });
 $('toggle-explorer').addEventListener('click', () => { project.layout.explorerVisible = !project.layout.explorerVisible; applyLayout(); scheduleSave(); });
 $('toggle-tools').addEventListener('click', () => { project.layout.toolsVisible = !project.layout.toolsVisible; applyLayout(); scheduleSave(); });

@@ -282,8 +282,8 @@ function showEditorContextMenu(event, which) {
   });
   action('Select All', 'Ctrl+A', () => { editor.focus(); editor.select(); });
   divider();
-  action('Find', 'Ctrl+F', () => showSearch(which));
-  action('Replace', 'Ctrl+H', () => showSearch(which, true));
+  action('Find', 'Alt+Shift+F', () => showSearch(which));
+  action('Replace', 'Alt+Shift+H', () => showSearch(which, true));
   action('Go to Line', 'Alt+Shift+G', () => goToLine(which));
   action('Toggle Line Comment', 'Ctrl+/', () => { editor.focus(); editLines(which, 'comment'); });
   action('Toggle Breakpoint', 'F9', () => toggleBreakpoint(file, editor.value.slice(0, targetOffset).split('\n').length));
@@ -370,7 +370,7 @@ function renderTabs(which) {
     const tab = document.createElement('div'); tab.className = `source-tab${state.active === name ? ' active' : ''}`; tab.setAttribute('role', 'tab'); tab.setAttribute('aria-selected', String(state.active === name)); tab.tabIndex = 0; tab.title = `Drag to reorder or move ${name} to another editor`; tab.draggable = true; tab.dataset.file = name;
     const glyph = document.createElement('span'); glyph.className = 'file-glyph'; glyph.textContent = '◇';
     const label = document.createElement('span'); label.className = 'source-tab-name'; label.textContent = name;
-    const close = document.createElement('button'); close.className = 'tab-close'; close.type = 'button'; close.setAttribute('aria-label', `Close ${name} in ${which} editor`); close.textContent = '×';
+    const close = document.createElement('button'); close.className = 'tab-close'; close.type = 'button'; close.setAttribute('aria-label', `Close ${name} in ${which} editor`); close.title = 'Close IDE tab (Alt+Shift+W when active, or middle-click)'; close.textContent = '×';
     close.addEventListener('click', event => { event.stopPropagation(); closeTab(which, name); });
     tab.addEventListener('auxclick', event => { if (event.button === 1) { event.preventDefault(); event.stopPropagation(); closeTab(which, name); } });
     tab.addEventListener('mousedown', event => { if (event.button === 1) event.preventDefault(); });
@@ -1248,6 +1248,43 @@ function cycleEditorTab(direction) {
   const index = state.tabs.indexOf(state.active);
   openSource(state.tabs[(index + direction + state.tabs.length) % state.tabs.length], which);
 }
+const browserShortcutCodes = ['KeyW', 'Tab', 'KeyP', 'KeyF', 'KeyH', 'KeyG', 'KeyS', 'KeyB', 'Backslash', 'ArrowLeft'];
+let browserKeysCaptured = false;
+function updateShortcutModeButton() {
+  const button = $('shortcut-mode'), active = !!document.fullscreenElement && browserKeysCaptured;
+  button.textContent = active ? '⛶ Exit fullscreen keys' : '⛶ Fullscreen keys';
+  button.title = active ? 'Exit fullscreen and release browser shortcuts (Esc)' : 'Capture browser shortcuts in fullscreen when supported';
+  button.setAttribute('aria-pressed', String(active));
+  button.classList.toggle('shortcut-mode-active', active);
+}
+async function toggleShortcutMode() {
+  if (document.fullscreenElement) { await document.exitFullscreen(); return; }
+  if (!document.fullscreenEnabled || typeof document.documentElement.requestFullscreen !== 'function' || typeof navigator.keyboard?.lock !== 'function') {
+    showToast('This browser cannot capture its shortcuts. Use Alt+Shift+W to close an IDE tab and Alt+PageUp/Down to switch tabs.');
+    return;
+  }
+  const button = $('shortcut-mode');
+  button.disabled = true;
+  try {
+    await document.documentElement.requestFullscreen();
+    await navigator.keyboard.lock(browserShortcutCodes);
+    if (!document.fullscreenElement) throw new Error('Fullscreen ended before shortcut capture.');
+    browserKeysCaptured = true;
+    updateShortcutModeButton();
+  } catch {
+    browserKeysCaptured = false;
+    try { navigator.keyboard?.unlock?.(); } catch {}
+    if (document.fullscreenElement) { try { await document.exitFullscreen(); } catch {} }
+    updateShortcutModeButton();
+    showToast('The browser did not allow shortcut capture. Use Alt+Shift+W and Alt+PageUp/Down instead.');
+  } finally {
+    button.disabled = false;
+  }
+}
+document.addEventListener('fullscreenchange', () => {
+  if (!document.fullscreenElement) { browserKeysCaptured = false; try { navigator.keyboard?.unlock?.(); } catch {} }
+  updateShortcutModeButton();
+});
 function renderQuickOpen() {
   const query = $('quick-open-input').value.toLowerCase(), list = $('quick-open-list'); list.replaceChildren();
   for (const name of project.fileOrder.filter(name => name.toLowerCase().includes(query)).slice(0, 12)) {
@@ -1391,6 +1428,7 @@ $('import-file').addEventListener('change', async event => {
   event.target.value = '';
 });
 $('split-editor').addEventListener('click', splitEditor); $('close-split').addEventListener('click', closeSplit);
+$('shortcut-mode').addEventListener('click', toggleShortcutMode);
 $('theme-select').addEventListener('change', event => { project.theme = THEMES.has(event.target.value) ? event.target.value : 'pseudo'; applyTheme(); save(); });
 $('toggle-explorer').addEventListener('click', () => { project.layout.explorerVisible = !project.layout.explorerVisible; applyLayout(); scheduleSave(); });
 $('toggle-tools').addEventListener('click', () => { project.layout.toolsVisible = !project.layout.toolsVisible; applyLayout(); scheduleSave(); });

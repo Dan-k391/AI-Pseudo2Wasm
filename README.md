@@ -17,7 +17,9 @@ Use the **Theme** selector in the top bar to switch between Pseudo2Wasm, Atom On
 
 Drag the Explorer, Program Tools, terminal, and split-editor dividers to resize them. The activity bar toggles panels. `Ctrl+Enter` runs, `Ctrl+Shift+B` compiles, `Ctrl+S` saves locally, and `Ctrl+\\` splits the editor. Browsers can reserve `Ctrl+W` and `Ctrl+Tab`, so `Alt+Shift+W` closes the active tab and `Alt+PageUp`/`Alt+PageDown` cycles tabs. Browser-safe alternatives for other actions are listed in the IDE Guide, including `Alt+Shift+G` for Go to Line. Compile a file and use the Build panel to download a portable project JSON.
 
-The editor supports `Ctrl+Z` undo, `Ctrl+Shift+Z` or `Ctrl+Y` redo, and an editor action menu on right-click. `Ctrl+F` opens Find; Enter and Shift+Enter move through matches while keeping Find focused. `F2` renames the symbol under the cursor and its references in the current file, with one undo step for the rename.
+The **Fullscreen keys** button optionally uses the browser Keyboard Lock API to send reserved combinations such as `Ctrl+W` and `Ctrl+Tab` to the IDE. It requires browser support, fullscreen, and browser permission; Esc exits. In a normal browser tab, use the alternative shortcuts above.
+
+The editor supports `Ctrl+Z` undo, `Ctrl+Shift+Z` or `Ctrl+Y` redo, and an editor action menu on right-click. `Alt+Shift+F` opens Find in a normal browser tab; `Ctrl+F` works when the browser passes it through. Enter and Shift+Enter move through matches while keeping Find focused. `F2` renames the symbol under the cursor and its references in the current file, with one undo step for the rename.
 
 In an editor, holding Ctrl underlines a symbol that has a definition. `Ctrl+click` jumps to its declaration and opens a references box; clicking a declaration opens the same box. Hovering a symbol shows its declaration and type. `F12` jumps to the declaration, `Shift+F12` opens references, and `Alt+Left` returns to the previous location. Navigation follows routine and class scopes within the active source file; each `.pseudo` file is compiled separately.
 
