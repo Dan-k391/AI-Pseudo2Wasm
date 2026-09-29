@@ -1342,6 +1342,20 @@ WHILE POSITION <= LENGTH(SOURCE)
           FRAME ← "Z"
         "F3" :
           OUTPUT "SET"
+          IF STEP_EXPR = "1" OR STEP_EXPR = "-1" THEN
+            CANDIDATE ← FROM_EXPR
+            WHILE LEFT(CANDIDATE, 1) = " "
+              CANDIDATE ← MID(CANDIDATE, 2, LENGTH(CANDIDATE))
+            ENDWHILE
+            WHILE RIGHT(CANDIDATE, 1) = " "
+              CANDIDATE ← LEFT(CANDIDATE, LENGTH(CANDIDATE) - 1)
+            ENDWHILE
+            IF IS_NUM(CANDIDATE) THEN
+              IF STR_TO_NUM(CANDIDATE) = INT(STR_TO_NUM(CANDIDATE)) THEN
+                OUTPUT "M:FOR_RANGE:" & NAME & ":" & CANDIDATE
+              ENDIF
+            ENDIF
+          ENDIF
           OUTPUT "WHILE"
           OUTPUT "T:" & NUM_TO_STR(SOURCE_LINE)
           OUTPUT "I:" & NAME

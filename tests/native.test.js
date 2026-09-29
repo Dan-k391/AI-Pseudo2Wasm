@@ -183,6 +183,94 @@ OUTPUT Clear(5)
   assert.throws(() => instance.exports.CLEAR(6), /Error 2 at line 5/);
 });
 
+test('speed release caches proven FOR indexes and falls back for unsafe extents', async () => {
+  const source = `DECLARE A : ARRAY[0:4] OF INTEGER
+FUNCTION Fill(N : REAL) RETURNS INTEGER
+  DECLARE I : INTEGER
+  DECLARE Total : INTEGER
+  Total ← 0
+  FOR I ← 0 TO N - 1
+    A[I] ← I
+    Total ← Total + 1
+  NEXT I
+  RETURN Total
+ENDFUNCTION
+OUTPUT Fill(5)
+`;
+  const speed = await compileSelfHosted(source, compiler, { release: true, optimization: 'speed' });
+  const standard = await compileSelfHosted(source, compiler, { release: true });
+  assert.equal(speed.nativeBackend, 'selfhosted');
+  assert.deepEqual((await createRuntime(speed).run()).output, ['5']);
+  assert.deepEqual((await createRuntime(standard).run()).output, ['5']);
+  const instantiate = built => {
+    const module = new WebAssembly.Module(built.binary);
+    const env = {};
+    for (const entry of WebAssembly.Module.imports(module)) {
+      env[entry.name] = entry.name === 'fail' ? (code, line) => { throw new Error(`Error ${code} at line ${line}`); } : () => 0;
+    }
+    return new WebAssembly.Instance(module, { env }).exports.FILL;
+  };
+  const fast = instantiate(speed), baseline = instantiate(standard);
+  for (const limit of [0, 3.5, 5, 5.5]) assert.equal(fast(limit), baseline(limit));
+  assert.throws(() => fast(6), /Error 2 at line 7/);
+  assert.throws(() => baseline(6), /Error 2 at line 7/);
+});
+
+test('speed loop indexes preserve descending bounds and body mutation errors', async () => {
+  const descending = `DECLARE A : ARRAY[0:4] OF INTEGER
+FUNCTION Reverse(Low : REAL) RETURNS INTEGER
+  DECLARE I : INTEGER
+  DECLARE Count : INTEGER
+  Count ← 0
+  FOR I ← 4 TO Low STEP -1
+    A[I] ← I
+    Count ← Count + 1
+  NEXT I
+  RETURN Count
+ENDFUNCTION
+OUTPUT Reverse(0)
+`;
+  const built = await compileSelfHosted(descending, compiler, { release: true, optimization: 'speed' });
+  assert.equal(built.nativeBackend, 'selfhosted');
+  assert.deepEqual((await createRuntime(built).run()).output, ['5']);
+  const module = new WebAssembly.Module(built.binary);
+  const env = {};
+  for (const entry of WebAssembly.Module.imports(module)) {
+    env[entry.name] = entry.name === 'fail' ? (code, line) => { throw new Error(`Error ${code} at line ${line}`); } : () => 0;
+  }
+  const reverse = new WebAssembly.Instance(module, { env }).exports.REVERSE;
+  assert.equal(reverse(2.5), 2);
+  assert.throws(() => reverse(-1), /Error 2 at line 7/);
+  const mutation = `DECLARE A : ARRAY[0:4] OF INTEGER
+DECLARE I : INTEGER
+FOR I ← 0 TO 2
+  I ← I + 0.5
+  A[I] ← 1
+NEXT I
+`;
+  const mutated = await compileSelfHosted(mutation, compiler, { release: true, optimization: 'speed' });
+  await assert.rejects(createRuntime(mutated).run(), error => error.line === 5 && /bounds/.test(error.message));
+});
+
+test('speed loop indexes handle negative array bounds', async () => {
+  const source = `DECLARE A : ARRAY[-2:2] OF INTEGER
+FUNCTION Fill(N : INTEGER) RETURNS INTEGER
+  DECLARE I : INTEGER
+  FOR I ← -2 TO N
+    A[I] ← I
+  NEXT I
+  RETURN A[-2] + A[2]
+ENDFUNCTION
+OUTPUT Fill(2)
+`;
+  const speed = await compileSelfHosted(source, compiler, { release: true, optimization: 'speed' });
+  const standard = await compileSelfHosted(source, compiler, { release: true });
+  assert.equal(speed.nativeBackend, 'selfhosted');
+  assert.deepEqual((await createRuntime(speed).run()).output, ['0']);
+  assert.deepEqual((await createRuntime(standard).run()).output, ['0']);
+  await assert.rejects(createRuntime(await compileSelfHosted(source.replace('Fill(2)', 'Fill(3)'), compiler, { release: true, optimization: 'speed' })).run(), error => error.line === 5 && /bounds/.test(error.message));
+});
+
 test('self-hosted native peephole removes multiplication by one', async () => {
   const prefix = 'DECLARE X : INTEGER\nX ← 7\n';
   const direct = await compileSelfHosted(prefix + 'X ← X\nOUTPUT X\n', compiler);

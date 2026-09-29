@@ -40,6 +40,8 @@ function decodeSelfHostedMetadata(ir) {
     if (line.startsWith('M:CONST:')) {
       // The native lowerer consumes constant metadata; the compatibility
       // assembler already receives its executable declaration IR below.
+    } else if (line.startsWith('M:FOR_RANGE:')) {
+      // Proven integer FOR starts are hints for the native optimizer only.
     } else if (line.startsWith('M:TYPE:')) {
       const separator = line.indexOf(':', 7);
       if (separator < 0) throw new Error(`Invalid type metadata: ${line}`);
