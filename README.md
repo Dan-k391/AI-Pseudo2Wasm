@@ -15,7 +15,7 @@ You can also double-click `dist/index.html` after `npm run build`. That built fi
 
 Use the **Theme** selector in the top bar to switch between Pseudo2Wasm, Atom One Dark Pro, Dracula, Nord, and GitHub Light. The selected theme is saved with the workspace and included in exported project JSON.
 
-Drag the Explorer, Program Tools, terminal, and split-editor dividers to resize them. The activity bar toggles panels. `Ctrl+Enter` runs, `Ctrl+Shift+B` compiles, `Ctrl+S` saves locally, `Ctrl+\\` splits the editor, `Ctrl+W` closes a tab, and `Ctrl+Tab` cycles tabs. Compile a file and use the Build panel to download a portable project JSON.
+Drag the Explorer, Program Tools, terminal, and split-editor dividers to resize them. The activity bar toggles panels. `Ctrl+Enter` runs, `Ctrl+Shift+B` compiles, `Ctrl+S` saves locally, and `Ctrl+\\` splits the editor. Browsers can reserve `Ctrl+W` and `Ctrl+Tab`, so `Alt+Shift+W` closes the active tab and `Alt+PageUp`/`Alt+PageDown` cycles tabs. Browser-safe alternatives for other actions are listed in the IDE Guide, including `Alt+Shift+G` for Go to Line. Compile a file and use the Build panel to download a portable project JSON.
 
 The editor supports `Ctrl+Z` undo, `Ctrl+Shift+Z` or `Ctrl+Y` redo, and an editor action menu on right-click. `Ctrl+F` opens Find; Enter and Shift+Enter move through matches while keeping Find focused. `F2` renames the symbol under the cursor and its references in the current file, with one undo step for the rename.
 

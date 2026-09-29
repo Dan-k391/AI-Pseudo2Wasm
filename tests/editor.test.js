@@ -1,6 +1,31 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { completions, diagnosticRange, diagnosticAtOffset, nextDiagnostic } from '../web/editor-intelligence.js';
+import { lineStartOffset, moveSelectedLines } from '../web/editor-operations.js';
+
+test('go to line offsets include blank lines', () => {
+  const source = 'first\n\nthird';
+  assert.equal(lineStartOffset(source, 1), 0);
+  assert.equal(lineStartOffset(source, 2), 6);
+  assert.equal(lineStartOffset(source, 3), 7);
+});
+
+test('moving a line repeatedly keeps the caret on that line', () => {
+  const source = 'one\ntwo\nthree\n';
+  const up = moveSelectedLines(source, 5, 5, -1);
+  assert.deepEqual(up, { text: 'two\none\nthree\n', start: 1, end: 1 });
+  const back = moveSelectedLines(up.text, up.start, up.end, 1);
+  assert.deepEqual(back, { text: source, start: 5, end: 5 });
+  assert.equal(moveSelectedLines(source, 0, 0, -1), null);
+  assert.equal(moveSelectedLines('one\ntwo', 5, 5, 1), null);
+});
+
+test('moving selected lines excludes the line after a selected newline', () => {
+  const source = 'one\ntwo\nthree\nfour';
+  const moved = moveSelectedLines(source, 4, 14, 1);
+  assert.deepEqual(moved, { text: 'one\nfour\ntwo\nthree', start: 9, end: 18 });
+  assert.deepEqual(moveSelectedLines(moved.text, moved.start, moved.end, -1), { text: source, start: 4, end: 13 });
+});
 
 test('completion offers keywords, builtins, and declarations', () => {
   const source = 'DECLARE Counter : INTEGER\nOUTPUT Cou';

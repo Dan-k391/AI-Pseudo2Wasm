@@ -8,6 +8,7 @@ import { selectExplorerFiles, moveExplorerFiles } from './explorer-selection.js'
 import { findMatches, replaceMatches } from './editor-search.js';
 import { indexSource, renameSymbol } from './editor-navigation.js';
 import { createEditorHistory } from './editor-history.js';
+import { lineStartOffset, moveSelectedLines } from './editor-operations.js';
 
 const $ = id => document.getElementById(id);
 const app = document.querySelector('.app');
@@ -124,10 +125,11 @@ function showToast(message) {
   $('toast-container').append(toast);
   setTimeout(() => toast.remove(), 4500);
 }
-function showWorkspaceDialog({ title, description, label, value = '', submitLabel = 'Save', danger = false, validate, onSubmit }) {
+function showWorkspaceDialog({ title, description, label, value = '', submitLabel = 'Save', danger = false, validate, onSubmit, restoreFocusOnSubmit = true }) {
   hideContextMenu();
   const dialog = $('workspace-dialog'), form = $('workspace-dialog-form'), input = $('dialog-input'), error = $('dialog-error');
   const previousFocus = document.activeElement;
+  let submitted = false;
   $('dialog-title').textContent = title;
   $('dialog-description').textContent = description || '';
   $('dialog-description').hidden = !description;
@@ -142,9 +144,9 @@ function showWorkspaceDialog({ title, description, label, value = '', submitLabe
     const result = label ? input.value.trim() : null;
     const problem = validate?.(result);
     if (problem) { error.textContent = problem; error.hidden = false; input.focus(); return; }
-    dialog.close(); onSubmit(result);
+    submitted = true; dialog.close(); onSubmit(result);
   };
-  dialog.onclose = () => { form.onsubmit = null; previousFocus?.focus?.(); };
+  dialog.onclose = () => { form.onsubmit = null; if (!submitted || restoreFocusOnSubmit) previousFocus?.focus?.(); };
   dialog.showModal();
   if (label) { input.focus(); input.select(); } else $('dialog-submit').focus();
 }
@@ -282,6 +284,7 @@ function showEditorContextMenu(event, which) {
   divider();
   action('Find', 'Ctrl+F', () => showSearch(which));
   action('Replace', 'Ctrl+H', () => showSearch(which, true));
+  action('Go to Line', 'Alt+Shift+G', () => goToLine(which));
   action('Toggle Line Comment', 'Ctrl+/', () => { editor.focus(); editLines(which, 'comment'); });
   action('Toggle Breakpoint', 'F9', () => toggleBreakpoint(file, editor.value.slice(0, targetOffset).split('\n').length));
   divider();
@@ -1100,6 +1103,7 @@ function showCompletions(which, explicit = false) {
   const result = completions(editor.value, editor.selectionStart, Object.keys(project.files));
   if (!result?.items.length || (!explicit && result.start === result.end && !['.', '"'].includes(editor.value[editor.selectionStart - 1]))) { hideCompletions(which); return; }
   pane.completionData = { ...result, selected: 0 };
+  pane.completion.scrollTop = 0;
   renderCompletions(which);
   const before = editor.value.slice(0, editor.selectionStart), lines = before.split('\n');
   const style = getComputedStyle(editor), canvas = document.createElement('canvas'), context = canvas.getContext('2d');
@@ -1113,8 +1117,9 @@ function showCompletions(which, explicit = false) {
 }
 function renderCompletions(which) {
   const pane = panes[which], data = pane.completionData;
+  const previousScroll = pane.completion.scrollTop;
   pane.completion.replaceChildren();
-  for (const [index, item] of data.items.slice(0, 12).entries()) {
+  for (const [index, item] of data.items.entries()) {
     const row = document.createElement('button'); row.type = 'button'; row.className = `completion-item${index === data.selected ? ' selected' : ''}`;
     row.setAttribute('role', 'option'); row.setAttribute('aria-selected', String(index === data.selected));
     const kind = document.createElement('span'); kind.className = `completion-kind completion-${item.kind}`; kind.textContent = item.kind.slice(0, 1).toUpperCase();
@@ -1123,6 +1128,14 @@ function renderCompletions(which) {
     row.append(kind, label, detail);
     row.addEventListener('mousedown', event => event.preventDefault());
     row.addEventListener('click', () => acceptCompletion(which, index)); pane.completion.append(row);
+  }
+  pane.completion.scrollTop = previousScroll;
+  const selected = pane.completion.children[data.selected];
+  if (selected && !pane.completion.hidden) {
+    const top = selected.offsetTop;
+    if (top < pane.completion.scrollTop) pane.completion.scrollTop = top;
+    else if (top + selected.offsetHeight > pane.completion.scrollTop + pane.completion.clientHeight)
+      pane.completion.scrollTop = top + selected.offsetHeight - pane.completion.clientHeight;
   }
 }
 function acceptCompletion(which, index = panes[which].completionData?.selected) {
@@ -1149,19 +1162,15 @@ function editLines(which, action) {
   editor.dispatchEvent(new Event('input', { bubbles: true }));
 }
 function moveLine(which, direction) {
-  const editor = panes[which].editor, source = editor.value, start = source.lastIndexOf('\n', editor.selectionStart - 1) + 1;
+  const pane = panes[which], editor = pane.editor;
+  const moved = moveSelectedLines(editor.value, editor.selectionStart, editor.selectionEnd, direction);
+  if (!moved) return;
   rememberEdit(which);
-  const endPos = source.indexOf('\n', editor.selectionEnd), end = endPos < 0 ? source.length : endPos;
-  if (direction < 0) {
-    if (start === 0) return;
-    const previous = source.lastIndexOf('\n', start - 2) + 1, chunk = source.slice(previous, start - 1);
-    editor.setRangeText(`${source.slice(start, end)}\n${chunk}`, previous, end, 'select');
-  } else {
-    if (endPos < 0) return;
-    const nextEndPos = source.indexOf('\n', endPos + 1), nextEnd = nextEndPos < 0 ? source.length : nextEndPos;
-    editor.setRangeText(`${source.slice(endPos + 1, nextEnd)}\n${source.slice(start, end)}`, start, nextEnd, 'select');
-  }
+  pane.suppressCompletion = true;
+  editor.value = moved.text;
+  editor.setSelectionRange(moved.start, moved.end);
   editor.dispatchEvent(new Event('input', { bubbles: true }));
+  revealEditorRange(which, moved.start);
 }
 function showSearch(which, replace = false) {
   const pane = panes[which]; pane.search.hidden = false;
@@ -1220,6 +1229,25 @@ function replaceSearch(which, all = false) {
 function quickOpen() {
   const overlay = $('quick-open'), input = $('quick-open-input'); overlay.hidden = false; input.value = ''; renderQuickOpen(); input.focus();
 }
+function goToLine(which = project.activePane) {
+  if (!project.panes[which].active) return;
+  const editor = panes[which].editor;
+  const lineCount = editor.value.split('\n').length;
+  const currentLine = editor.value.slice(0, editor.selectionStart).split('\n').length;
+  showWorkspaceDialog({ title: 'Go to line', label: 'Line number', value: String(currentLine), submitLabel: 'Go', restoreFocusOnSubmit: false,
+    validate: value => !/^\d+$/.test(value) || Number(value) < 1 || Number(value) > lineCount ? 'Enter a line number in the current file.' : null,
+    onSubmit: value => {
+      const position = lineStartOffset(editor.value, Number(value));
+      editor.focus(); editor.setSelectionRange(position, position);
+      revealEditorRange(which, position); updateStatus(); updateDiagnosticAtCaret(which);
+    } });
+}
+function cycleEditorTab(direction) {
+  const which = project.activePane, state = project.panes[which];
+  if (!state.tabs.length) return;
+  const index = state.tabs.indexOf(state.active);
+  openSource(state.tabs[(index + direction + state.tabs.length) % state.tabs.length], which);
+}
 function renderQuickOpen() {
   const query = $('quick-open-input').value.toLowerCase(), list = $('quick-open-list'); list.replaceChildren();
   for (const name of project.fileOrder.filter(name => name.toLowerCase().includes(query)).slice(0, 12)) {
@@ -1275,7 +1303,7 @@ for (const which of ['primary', 'secondary']) {
     if (event.key === 'F12') { event.preventDefault(); hideCompletions(which); if (event.shiftKey) showReferences(which); else goToDefinition(which); return; }
     if (event.key === 'F2') { event.preventDefault(); hideCompletions(which); renameEditorSymbol(which); return; }
     if (event.altKey && event.key === 'ArrowLeft') { event.preventDefault(); navigateBack(); return; }
-    if (data && ['ArrowDown', 'ArrowUp'].includes(event.key)) { event.preventDefault(); data.selected = (data.selected + (event.key === 'ArrowDown' ? 1 : -1) + Math.min(12, data.items.length)) % Math.min(12, data.items.length); renderCompletions(which); return; }
+    if (data && ['ArrowDown', 'ArrowUp'].includes(event.key)) { event.preventDefault(); data.selected = (data.selected + (event.key === 'ArrowDown' ? 1 : -1) + data.items.length) % data.items.length; renderCompletions(which); return; }
     if (data && ['Tab', 'Enter'].includes(event.key)) { event.preventDefault(); acceptCompletion(which); return; }
     if (event.key === 'Escape' && data) { event.preventDefault(); hideCompletions(which); return; }
     if ((event.ctrlKey || event.metaKey) && event.code === 'Space') { event.preventDefault(); showCompletions(which, true); return; }
@@ -1388,6 +1416,27 @@ document.addEventListener('keydown', async event => {
   if (event.key === 'Escape' && !$('quick-open').hidden) { $('quick-open').hidden = true; return; }
   if (event.key === 'F5') { event.preventDefault(); if (event.shiftKey) stopDebug(); else if (debugSession?.status === 'paused') resumeDebug('continue'); else if (!debugSession || ['completed', 'failed'].includes(debugSession.status)) debugProgram(); return; }
   if (event.key === 'F10') { event.preventDefault(); if (debugSession?.status === 'paused') resumeDebug('step'); else if (!debugSession || ['completed', 'failed'].includes(debugSession.status)) debugProgram(); return; }
+  if (event.altKey && !event.shiftKey && !event.ctrlKey && !event.metaKey && (event.key === 'PageDown' || event.key === 'PageUp')) {
+    event.preventDefault(); cycleEditorTab(event.key === 'PageDown' ? 1 : -1); return;
+  }
+  // Browsers reserve some familiar editor shortcuts (notably Ctrl+W and Ctrl+Tab).
+  if (event.altKey && event.shiftKey && !event.ctrlKey && !event.metaKey && !$('workspace-dialog').open) {
+    const key = event.code;
+    if (['KeyB', 'KeyD', 'KeyF', 'KeyG', 'KeyH', 'KeyL', 'KeyP', 'KeyS', 'KeyW', 'KeyX'].includes(key)) {
+      event.preventDefault();
+      if (key === 'KeyB') { const result = await build({ release: $('release-build').checked }); switchConsole(result ? 'build' : 'diagnostics'); }
+      else if (key === 'KeyD') { if (debugSession?.status === 'paused') resumeDebug('continue'); else if (!debugSession || ['completed', 'failed'].includes(debugSession.status)) debugProgram(); }
+      else if (key === 'KeyF') showSearch(project.activePane);
+      else if (key === 'KeyG') goToLine();
+      else if (key === 'KeyH') showSearch(project.activePane, true);
+      else if (key === 'KeyL') save();
+      else if (key === 'KeyP') quickOpen();
+      else if (key === 'KeyS') { if (debugSession?.status === 'paused') resumeDebug('step'); else if (!debugSession || ['completed', 'failed'].includes(debugSession.status)) debugProgram(); }
+      else if (key === 'KeyW') { if (activeName()) closeTab(project.activePane, activeName()); }
+      else if (key === 'KeyX') stopDebug();
+      return;
+    }
+  }
   if (!(event.ctrlKey || event.metaKey)) return;
   if (event.key === 'Enter') { event.preventDefault(); runProgram(); }
   else if (event.shiftKey && event.key.toLowerCase() === 'b') { event.preventDefault(); const result = await build({ release: $('release-build').checked }); switchConsole(result ? 'build' : 'diagnostics'); }
@@ -1395,10 +1444,10 @@ document.addEventListener('keydown', async event => {
   else if (event.key.toLowerCase() === 'p') { event.preventDefault(); quickOpen(); }
   else if (event.key.toLowerCase() === 'f') { event.preventDefault(); showSearch(project.activePane); }
   else if (event.key.toLowerCase() === 'h') { event.preventDefault(); showSearch(project.activePane, true); }
-  else if (event.key.toLowerCase() === 'g') { event.preventDefault(); showWorkspaceDialog({ title: 'Go to line', label: 'Line number', value: '1', submitLabel: 'Go', validate: value => !/^\d+$/.test(value) || Number(value) < 1 || Number(value) > panes[project.activePane].editor.value.split('\n').length ? 'Enter a line number in the current file.' : null, onSubmit: value => { const editor = panes[project.activePane].editor; const position = editor.value.split('\n').slice(0, Number(value) - 1).reduce((sum, line) => sum + line.length + 1, 0); editor.focus(); editor.setSelectionRange(position, position); updateStatus(); updateDiagnosticAtCaret(project.activePane); } }); }
+  else if (event.key.toLowerCase() === 'g') { event.preventDefault(); goToLine(); }
   else if (event.key === '\\') { event.preventDefault(); splitEditor(); }
   else if (event.key.toLowerCase() === 'w') { event.preventDefault(); if (activeName()) closeTab(project.activePane, activeName()); }
-  else if (event.key === 'Tab') { event.preventDefault(); const state = project.panes[project.activePane]; if (state.tabs.length) { const index = state.tabs.indexOf(state.active), offset = event.shiftKey ? -1 : 1; openSource(state.tabs[(index + offset + state.tabs.length) % state.tabs.length]); } }
+  else if (event.key === 'Tab') { event.preventDefault(); cycleEditorTab(event.shiftKey ? -1 : 1); }
 });
 installResizer('left-resizer', 'x', 'explorerWidth', () => 150, () => Math.min(450, innerWidth - 380));
 installResizer('right-resizer', 'x', 'toolsWidth', () => 220, () => Math.min(500, innerWidth - 380));
