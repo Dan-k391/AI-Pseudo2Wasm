@@ -216,6 +216,34 @@ OUTPUT Fill(5)
   assert.throws(() => baseline(6), /Error 2 at line 7/);
 });
 
+test('speed release uses integer FOR control without changing fractional or out-of-range endpoints', async () => {
+  const source = `FUNCTION Up(Limit : REAL) RETURNS INTEGER
+  DECLARE I : INTEGER
+  DECLARE Sum : INTEGER
+  Sum ← 0
+  FOR I ← 0 TO Limit
+    Sum ← Sum + I
+  NEXT I
+  RETURN 100 * I + Sum
+ENDFUNCTION
+FUNCTION Down(Limit : REAL) RETURNS INTEGER
+  DECLARE I : INTEGER
+  DECLARE Sum : INTEGER
+  Sum ← 0
+  FOR I ← 4 TO Limit STEP -1
+    Sum ← Sum + I
+  NEXT I
+  RETURN 100 * I + Sum
+ENDFUNCTION
+OUTPUT Up(3.5), " ", Up(-0.5), " ", Up(-2147483648), " ", Down(1.5), " ", Down(2147483648)
+`;
+  const speed = await compileSelfHosted(source, compiler, { release: true, optimization: 'speed' });
+  const baseline = await compileSelfHosted(source, compiler, { release: true });
+  assert.equal(speed.nativeBackend, 'selfhosted');
+  assert.deepEqual((await createRuntime(speed).run()).output, ['406 0 0 109 400']);
+  assert.deepEqual((await createRuntime(speed).run()).output, (await createRuntime(baseline).run()).output);
+});
+
 test('speed loop indexes preserve descending bounds and body mutation errors', async () => {
   const descending = `DECLARE A : ARRAY[0:4] OF INTEGER
 FUNCTION Reverse(Low : REAL) RETURNS INTEGER
@@ -269,6 +297,21 @@ OUTPUT Fill(2)
   assert.deepEqual((await createRuntime(speed).run()).output, ['0']);
   assert.deepEqual((await createRuntime(standard).run()).output, ['0']);
   await assert.rejects(createRuntime(await compileSelfHosted(source.replace('Fill(2)', 'Fill(3)'), compiler, { release: true, optimization: 'speed' })).run(), error => error.line === 5 && /bounds/.test(error.message));
+});
+
+test('a later unsafe FOR index never inherits an earlier loop cache', async () => {
+  const source = `DECLARE A : ARRAY[0:4] OF INTEGER
+DECLARE I : INTEGER
+FOR I ← 0 TO 4
+  A[I] ← I
+NEXT I
+FOR I ← 5 TO 5
+  A[I] ← I
+NEXT I
+`;
+  const built = await compileSelfHosted(source, compiler, { release: true, optimization: 'speed' });
+  assert.equal(built.nativeBackend, 'selfhosted');
+  await assert.rejects(createRuntime(built).run(), error => error.line === 7 && /bounds/.test(error.message));
 });
 
 test('self-hosted native peephole removes multiplication by one', async () => {

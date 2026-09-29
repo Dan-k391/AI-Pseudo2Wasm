@@ -57,10 +57,13 @@ DECLARE FILL_DEPTH : INTEGER
 DECLARE FILL_MATCHED : BOOLEAN
 DECLARE LOOP_DEPTH : INTEGER
 DECLARE RANGE_SYMBOL : ARRAY[1:256] OF INTEGER
+DECLARE RANGE_CACHE_ACTIVE : ARRAY[1:256] OF BOOLEAN
 DECLARE RANGE_LOW : ARRAY[1:256] OF INTEGER
 DECLARE RANGE_HIGH : ARRAY[1:256] OF INTEGER
 DECLARE RANGE_LOCAL : ARRAY[1:256] OF INTEGER
 DECLARE RANGE_INDEX_LOCAL : ARRAY[1:256] OF INTEGER
+DECLARE RANGE_LOOP_GUARD_LOCAL : ARRAY[1:256] OF INTEGER
+DECLARE RANGE_END_LOCAL : ARRAY[1:256] OF INTEGER
 DECLARE RANGE_STEP : ARRAY[1:256] OF INTEGER
 DECLARE RANGE_MAX_DEPTH : ARRAY[1:257] OF INTEGER
 DECLARE RANGE_FOUND_LOW : INTEGER
@@ -68,6 +71,8 @@ DECLARE RANGE_FOUND_HIGH : INTEGER
 DECLARE RANGE_START_VALUE : INTEGER
 DECLARE RANGE_END_NAME : STRING
 DECLARE RANGE_DIRECTION : INTEGER
+DECLARE RANGE_END_AT : INTEGER
+DECLARE RANGE_ARRAY_SAFE : BOOLEAN
 DECLARE LARGE_LITERAL : BOOLEAN
 DECLARE SLOW_CONCAT : BOOLEAN
 DECLARE BOOTSTRAP_MODE : BOOLEAN
@@ -605,7 +610,7 @@ FUNCTION ARRAY_ADDRESS(BASE_CODE : STRING, TYPE_TEXT : STRING, FIRST_ARG : INTEG
       INDEX_SLOT ← -1
       IF OPTIMIZE_MODE AND RELEASE_MODE AND FILL_DEPTH <= 256 THEN
         FOR DEPTH ← 1 TO FILL_DEPTH
-          IF RANGE_SYMBOL[DEPTH] > 0 AND ARG_TEXT[ARG_INDEX] = SYMBOL_NAMES[RANGE_SYMBOL[DEPTH]] THEN
+          IF RANGE_CACHE_ACTIVE[DEPTH] AND RANGE_SYMBOL[DEPTH] > 0 AND ARG_TEXT[ARG_INDEX] = SYMBOL_NAMES[RANGE_SYMBOL[DEPTH]] THEN
             IF RANGE_LOW[DEPTH] >= LO AND RANGE_HIGH[DEPTH] <= HI THEN
               GUARD_SLOT ← RANGE_LOCAL[DEPTH]
               INDEX_SLOT ← RANGE_INDEX_LOCAL[DEPTH]
@@ -783,13 +788,15 @@ ENDFUNCTION
 
 // A canonical FOR counter starting at an integer literal remains integral if
 // its body only reads it. Check the loop's captured end once, then let direct
-// array indexes bypass the repeated per-access bounds and fraction checks.
-// The ordinary checked path remains for a nonmatching end or array extent.
+// Proven unit-step FOR loops keep an i32 counter and end in WASM locals.
+// The visible f64 counter is synchronized for body reads and after NEXT.
+// Dynamic ends outside the safe i32 interval use the original f64 control.
+// In-range array indexes can also bypass repeated bounds and fraction checks.
 FUNCTION RANGE_GUARD_SLOT(DEPTH : INTEGER) RETURNS INTEGER
   IF CURRENT_ROUTINE = 0 THEN
-    RETURN 3 + PROMOTED_COUNT + 2 * (DEPTH - 1)
+    RETURN 3 + PROMOTED_COUNT + 4 * (DEPTH - 1)
   ENDIF
-  RETURN ROUTINE_PARAM_COUNTS[CURRENT_ROUTINE] + 5 + ROUTINE_PROMOTED_COUNT[CURRENT_ROUTINE] + 2 * (DEPTH - 1)
+  RETURN ROUTINE_PARAM_COUNTS[CURRENT_ROUTINE] + 5 + ROUTINE_PROMOTED_COUNT[CURRENT_ROUTINE] + 4 * (DEPTH - 1)
 ENDFUNCTION
 
 FUNCTION SAFE_FOR_RANGE(AT : INTEGER) RETURNS INTEGER
@@ -820,6 +827,8 @@ FUNCTION SAFE_FOR_RANGE(AT : INTEGER) RETURNS INTEGER
   RANGE_START_VALUE ← 0
   RANGE_END_NAME ← ""
   RANGE_DIRECTION ← 0
+  RANGE_END_AT ← 0
+  RANGE_ARRAY_SAFE ← FALSE
   IF AT < 2 OR AT + 8 > LINE_COUNT OR LEFT(LINES[AT - 1], 12) <> "M:FOR_RANGE:" THEN
     RETURN 0
   ENDIF
@@ -833,6 +842,9 @@ FUNCTION SAFE_FOR_RANGE(AT : INTEGER) RETURNS INTEGER
   ENDIF
   COUNTER_NAME ← LEFT(MARKER, COLON - 1)
   START_VALUE ← STR_TO_NUM(MID(MARKER, COLON + 1, LENGTH(MARKER)))
+  IF START_VALUE < -2147483646 OR START_VALUE > 2147483646 THEN
+    RETURN 0
+  ENDIF
   IF LINES[AT + 2] <> "I:" & COUNTER_NAME OR LINES[AT + 3] <> "GET" OR LINES[AT + 5] <> "GET" OR LINES[AT + 7] <> "GET" THEN
     RETURN 0
   ENDIF
@@ -929,14 +941,14 @@ FUNCTION SAFE_FOR_RANGE(AT : INTEGER) RETURNS INTEGER
       ENDIF
     ENDIF
   NEXT SCAN_AT
-  IF NOT HAS_ARRAY OR RANGE_FOUND_LOW > RANGE_FOUND_HIGH OR START_VALUE < RANGE_FOUND_LOW OR START_VALUE > RANGE_FOUND_HIGH THEN
-    RETURN 0
-  ENDIF
-  IF RANGE_FOUND_LOW < -2147483646 OR RANGE_FOUND_HIGH > 2147483646 THEN
-    RETURN 0
+  IF HAS_ARRAY AND RANGE_FOUND_LOW <= RANGE_FOUND_HIGH AND START_VALUE >= RANGE_FOUND_LOW AND START_VALUE <= RANGE_FOUND_HIGH THEN
+    IF RANGE_FOUND_LOW >= -2147483646 AND RANGE_FOUND_HIGH <= 2147483646 THEN
+      RANGE_ARRAY_SAFE ← TRUE
+    ENDIF
   ENDIF
   RANGE_END_NAME ← END_NAME
   RANGE_START_VALUE ← START_VALUE
+  RANGE_END_AT ← END_AT
   RETURN COUNTER_ID
 ENDFUNCTION
 
@@ -1575,7 +1587,7 @@ WHILE INDEX <= LINE_COUNT AND UNSUPPORTED = 0
       ENDIF
       IF RANGE_MAX_DEPTH[CURRENT_ROUTINE + 1] > 0 THEN
         BODY ← CHR(ASC(LEFT(BODY, 1)) + 1) & MID(BODY, 2, LENGTH(BODY))
-        BODY ← BODY & ULEB(2 * RANGE_MAX_DEPTH[CURRENT_ROUTINE + 1]) & CHR(127)
+        BODY ← BODY & ULEB(4 * RANGE_MAX_DEPTH[CURRENT_ROUTINE + 1]) & CHR(127)
       ENDIF
       BODY ← BODY & CODE
       ROUTINE_BODIES[CURRENT_ROUTINE] ← BODY
@@ -2100,11 +2112,25 @@ WHILE INDEX <= LINE_COUNT AND UNSUPPORTED = 0
                           RIGHT_CODE ← STACK_CODE[STACK_SIZE - 1]
                           VALUE_CODE ← STACK_CODE[STACK_SIZE]
                           IF OPTIMIZE_MODE AND (LINE = "FOR_TEST_UP" OR LINE = "FOR_TEST_DOWN") THEN
-                            IF LINE = "FOR_TEST_UP" THEN
-                              CODE ← CODE & LEFT_CODE & RIGHT_CODE & CHR(101) & CHR(69) & CHR(13) & CHR(1)
-                            ELSE
-                              CODE ← CODE & LEFT_CODE & RIGHT_CODE & CHR(102) & CHR(69) & CHR(13) & CHR(1)
+                            IF FILL_DEPTH > 0 AND FILL_DEPTH <= 256 AND RANGE_SYMBOL[FILL_DEPTH] > 0 THEN
+                              CODE ← CODE & CHR(32) & ULEB(RANGE_LOOP_GUARD_LOCAL[FILL_DEPTH]) & CHR(4) & CHR(127)
+                              CODE ← CODE & CHR(32) & ULEB(RANGE_INDEX_LOCAL[FILL_DEPTH]) & CHR(32) & ULEB(RANGE_END_LOCAL[FILL_DEPTH])
+                              IF LINE = "FOR_TEST_UP" THEN
+                                CODE ← CODE & CHR(76)
+                              ELSE
+                                CODE ← CODE & CHR(78)
+                              ENDIF
+                              CODE ← CODE & CHR(5)
                             ENDIF
+                            IF LINE = "FOR_TEST_UP" THEN
+                              CODE ← CODE & LEFT_CODE & RIGHT_CODE & CHR(101)
+                            ELSE
+                              CODE ← CODE & LEFT_CODE & RIGHT_CODE & CHR(102)
+                            ENDIF
+                            IF FILL_DEPTH > 0 AND FILL_DEPTH <= 256 AND RANGE_SYMBOL[FILL_DEPTH] > 0 THEN
+                              CODE ← CODE & CHR(11)
+                            ENDIF
+                            CODE ← CODE & CHR(69) & CHR(13) & CHR(1)
                           ELSE
                             IF VALUE_CODE = NUMBER_CODE(1) THEN
                               CODE ← CODE & LEFT_CODE & RIGHT_CODE & CHR(101) & CHR(69) & CHR(13) & CHR(1)
@@ -2191,6 +2217,7 @@ WHILE INDEX <= LINE_COUNT AND UNSUPPORTED = 0
                               IF FILL_DEPTH <= 256 THEN
                                 FILL_ACTIVE[FILL_DEPTH] ← FALSE
                                 RANGE_SYMBOL[FILL_DEPTH] ← 0
+                                RANGE_CACHE_ACTIVE[FILL_DEPTH] ← FALSE
                                 IF OPTIMIZE_MODE AND RELEASE_MODE THEN
                                   CODE ← CODE & ZERO_FILL_PREFIX(INDEX)
                                   FILL_ACTIVE[FILL_DEPTH] ← FILL_MATCHED
@@ -2198,21 +2225,43 @@ WHILE INDEX <= LINE_COUNT AND UNSUPPORTED = 0
                                     J ← SAFE_FOR_RANGE(INDEX)
                                     IF J > 0 THEN
                                       RANGE_SYMBOL[FILL_DEPTH] ← J
-                                      RANGE_LOW[FILL_DEPTH] ← RANGE_FOUND_LOW
-                                      RANGE_HIGH[FILL_DEPTH] ← RANGE_FOUND_HIGH
-                                      RANGE_LOCAL[FILL_DEPTH] ← RANGE_GUARD_SLOT(FILL_DEPTH)
-                                      RANGE_INDEX_LOCAL[FILL_DEPTH] ← RANGE_LOCAL[FILL_DEPTH] + 1
+                                      RANGE_CACHE_ACTIVE[FILL_DEPTH] ← RANGE_ARRAY_SAFE
+                                      RANGE_LOW[FILL_DEPTH] ← 0
+                                      RANGE_HIGH[FILL_DEPTH] ← -1
+                                      IF RANGE_ARRAY_SAFE THEN
+                                        RANGE_LOW[FILL_DEPTH] ← RANGE_FOUND_LOW
+                                        RANGE_HIGH[FILL_DEPTH] ← RANGE_FOUND_HIGH
+                                      ENDIF
+                                      RANGE_LOOP_GUARD_LOCAL[FILL_DEPTH] ← RANGE_GUARD_SLOT(FILL_DEPTH)
+                                      RANGE_INDEX_LOCAL[FILL_DEPTH] ← RANGE_LOOP_GUARD_LOCAL[FILL_DEPTH] + 1
+                                      RANGE_END_LOCAL[FILL_DEPTH] ← RANGE_LOOP_GUARD_LOCAL[FILL_DEPTH] + 2
+                                      RANGE_LOCAL[FILL_DEPTH] ← RANGE_LOOP_GUARD_LOCAL[FILL_DEPTH] + 3
                                       RANGE_STEP[FILL_DEPTH] ← RANGE_DIRECTION
+                                      SKIP_TO[RANGE_END_AT - 8] ← RANGE_END_AT - 1
                                       IF FILL_DEPTH > RANGE_MAX_DEPTH[CURRENT_ROUTINE + 1] THEN
                                         RANGE_MAX_DEPTH[CURRENT_ROUTINE + 1] ← FILL_DEPTH
                                       ENDIF
-                                      IF RANGE_DIRECTION < 0 THEN
-                                        CODE ← CODE & INDEX_CODE(RANGE_END_NAME) & NUMBER_CODE(RANGE_FOUND_LOW) & CHR(102)
-                                      ELSE
-                                        CODE ← CODE & INDEX_CODE(RANGE_END_NAME) & NUMBER_CODE(RANGE_FOUND_HIGH) & CHR(101)
-                                      ENDIF
-                                      CODE ← CODE & CHR(33) & ULEB(RANGE_LOCAL[FILL_DEPTH])
+                                      CODE ← CODE & INDEX_CODE(RANGE_END_NAME) & NUMBER_CODE(-2147483646) & CHR(102)
+                                      CODE ← CODE & INDEX_CODE(RANGE_END_NAME) & NUMBER_CODE(2147483646) & CHR(101) & CHR(113)
+                                      CODE ← CODE & CHR(33) & ULEB(RANGE_LOOP_GUARD_LOCAL[FILL_DEPTH])
                                       CODE ← CODE & I32_CONST(RANGE_START_VALUE) & CHR(33) & ULEB(RANGE_INDEX_LOCAL[FILL_DEPTH])
+                                      CODE ← CODE & CHR(32) & ULEB(RANGE_LOOP_GUARD_LOCAL[FILL_DEPTH]) & CHR(4) & CHR(64)
+                                      CODE ← CODE & INDEX_CODE(RANGE_END_NAME)
+                                      IF RANGE_DIRECTION < 0 THEN
+                                        CODE ← CODE & CHR(155)
+                                      ELSE
+                                        CODE ← CODE & CHR(156)
+                                      ENDIF
+                                      CODE ← CODE & CHR(170) & CHR(33) & ULEB(RANGE_END_LOCAL[FILL_DEPTH]) & CHR(11)
+                                      IF RANGE_ARRAY_SAFE THEN
+                                        CODE ← CODE & CHR(32) & ULEB(RANGE_LOOP_GUARD_LOCAL[FILL_DEPTH])
+                                        IF RANGE_DIRECTION < 0 THEN
+                                          CODE ← CODE & INDEX_CODE(RANGE_END_NAME) & NUMBER_CODE(RANGE_FOUND_LOW) & CHR(102)
+                                        ELSE
+                                          CODE ← CODE & INDEX_CODE(RANGE_END_NAME) & NUMBER_CODE(RANGE_FOUND_HIGH) & CHR(101)
+                                        ENDIF
+                                        CODE ← CODE & CHR(113) & CHR(33) & ULEB(RANGE_LOCAL[FILL_DEPTH])
+                                      ENDIF
                                     ENDIF
                                   ENDIF
                                 ENDIF
@@ -2222,9 +2271,15 @@ WHILE INDEX <= LINE_COUNT AND UNSUPPORTED = 0
                             "ENDWHILE" :
                               IF FILL_DEPTH > 0 AND FILL_DEPTH <= 256 THEN
                                 IF RANGE_SYMBOL[FILL_DEPTH] > 0 THEN
+                                  CODE ← CODE & CHR(32) & ULEB(RANGE_LOOP_GUARD_LOCAL[FILL_DEPTH]) & CHR(4) & CHR(64)
                                   CODE ← CODE & CHR(32) & ULEB(RANGE_INDEX_LOCAL[FILL_DEPTH])
                                   CODE ← CODE & I32_CONST(RANGE_STEP[FILL_DEPTH]) & CHR(106)
-                                  CODE ← CODE & CHR(33) & ULEB(RANGE_INDEX_LOCAL[FILL_DEPTH])
+                                  CODE ← CODE & CHR(34) & ULEB(RANGE_INDEX_LOCAL[FILL_DEPTH]) & CHR(183)
+                                  CODE ← CODE & CHR(33) & ULEB(PROMOTED_LOCAL[RANGE_SYMBOL[FILL_DEPTH]] - 1)
+                                  CODE ← CODE & CHR(5)
+                                  CODE ← CODE & CHR(32) & ULEB(PROMOTED_LOCAL[RANGE_SYMBOL[FILL_DEPTH]] - 1)
+                                  CODE ← CODE & NUMBER_CODE(RANGE_STEP[FILL_DEPTH]) & CHR(160)
+                                  CODE ← CODE & CHR(33) & ULEB(PROMOTED_LOCAL[RANGE_SYMBOL[FILL_DEPTH]] - 1) & CHR(11)
                                 ENDIF
                               ENDIF
                               CODE ← CODE & CHR(12) & CHR(0) & CHR(11) & CHR(11)
@@ -2233,6 +2288,7 @@ WHILE INDEX <= LINE_COUNT AND UNSUPPORTED = 0
                                   CODE ← CODE & CHR(11)
                                 ENDIF
                                 RANGE_SYMBOL[FILL_DEPTH] ← 0
+                                RANGE_CACHE_ACTIVE[FILL_DEPTH] ← FALSE
                               ENDIF
                               FILL_DEPTH ← FILL_DEPTH - 1
                             "ELSE" : CODE ← CODE & CHR(5)
@@ -2285,7 +2341,7 @@ ELSE
   ENDIF
   IF RANGE_MAX_DEPTH[1] > 0 THEN
     BODY ← CHR(ASC(LEFT(BODY, 1)) + 1) & MID(BODY, 2, LENGTH(BODY))
-    BODY ← BODY & ULEB(2 * RANGE_MAX_DEPTH[1]) & CHR(127)
+    BODY ← BODY & ULEB(4 * RANGE_MAX_DEPTH[1]) & CHR(127)
   ENDIF
   BODY ← BODY & CODE & CHR(11)
   CONCAT_BODY ← HEX_BYTES("01067F2000AA21022001AA2103200228020041FFFFFFFF07712104200328020041FFFFFFFF077121052000100DAA2001100DAA6A210723042106200641146A3F004110744B0440410140001A0B200641146A24042006200420056A4180808080787236020020062002360204200620033602082006410036020C200620073602102006B80B")
