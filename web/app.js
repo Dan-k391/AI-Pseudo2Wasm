@@ -637,6 +637,7 @@ function setProblems(name, items) {
 const diagnosticCoordinator = createDiagnosticCoordinator(setProblems);
 let diagnosticWorker;
 try {
+  if (location.protocol === 'file:') throw new Error('Use local diagnostics for file pages');
   diagnosticWorker = new Worker(new URL('./diagnostics-worker.js', import.meta.url), { type: 'module' });
   diagnosticWorker.onmessage = ({ data }) => diagnosticCoordinator.receive(data);
   diagnosticWorker.onerror = () => {
@@ -1314,9 +1315,12 @@ for (const example of compilerExamples) {
   button.addEventListener('click', async () => {
     button.disabled = true;
     try {
-      const response = await fetch(new URL(`./examples/self-hosted-compiler/${example.filename}`, import.meta.url));
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const source = await response.text();
+      let source = globalThis.__P2W_ASSETS__?.examples?.[example.filename];
+      if (source === undefined) {
+        const response = await fetch(new URL(`./examples/self-hosted-compiler/${example.filename}`, import.meta.url));
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        source = await response.text();
+      }
       openExampleSource(example.filename, source);
     } catch {
       showToast(`Could not load ${example.filename}. Please try again.`);

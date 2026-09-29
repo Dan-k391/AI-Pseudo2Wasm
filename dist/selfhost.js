@@ -13,6 +13,16 @@ const metadata = async path => {
 };
 
 async function assets() {
+  const embedded = globalThis.__P2W_ASSETS__;
+  if (embedded) {
+    assetsPromise ??= Promise.resolve(Object.fromEntries(
+      ['core', 'assembler', 'native'].map(name => [name, {
+        binary: Uint8Array.from(atob(embedded.binaries[name]), character => character.charCodeAt(0)),
+        ...embedded.metadata[name],
+      }]),
+    ));
+    return assetsPromise;
+  }
   assetsPromise ??= Promise.all([
     binary('./bootstrap/core.wasm'), metadata('./bootstrap/core.json'),
     binary('./bootstrap/assembler.wasm'), metadata('./bootstrap/assembler.json'),

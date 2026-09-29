@@ -11,6 +11,8 @@ npm run serve
 
 Open <http://127.0.0.1:4173>. The VS Code style workspace saves source files, open tabs, panel sizes, input, and virtual files in browser storage. Create or import several `.pseudo` files from Explorer, keep them open as tabs, and use **Split editor** to view two files side by side. Alt-click a file in Explorer to open it in the other editor. Run, Compile, and Download .wasm use the active editor's file.
 
+You can also double-click `dist/index.html` after `npm run build`. That built file contains the editor scripts, styles, self-hosted WASM compiler modules, and compiler examples, so it works without an HTTP server. Opening the source template at `web/index.html` from disk redirects to the built file.
+
 Use the **Theme** selector in the top bar to switch between Pseudo2Wasm, Atom One Dark Pro, Dracula, Nord, and GitHub Light. The selected theme is saved with the workspace and included in exported project JSON.
 
 Drag the Explorer, Program Tools, terminal, and split-editor dividers to resize them. The activity bar toggles panels. `Ctrl+Enter` runs, `Ctrl+Shift+B` compiles, `Ctrl+S` saves locally, `Ctrl+\\` splits the editor, `Ctrl+W` closes a tab, and `Ctrl+Tab` cycles tabs. Compile a file and use the Build panel to download a portable project JSON.
@@ -19,7 +21,7 @@ The editor supports `Ctrl+Z` undo, `Ctrl+Shift+Z` or `Ctrl+Y` redo, and an edito
 
 In an editor, holding Ctrl underlines a symbol that has a definition. `Ctrl+click` jumps to its declaration and opens a references box; clicking a declaration opens the same box. Hovering a symbol shows its declaration and type. `F12` jumps to the declaration, `Shift+F12` opens references, and `Alt+Left` returns to the previous location. Navigation follows routine and class scopes within the active source file; each `.pseudo` file is compiled separately.
 
-The editor analyzes incomplete source in a background worker and underlines exact error spans. It checks expression structure, paired blocks, and constant array indexes, then merges those findings with self-hosted compiler errors. Hover an underline for its message, open Problems to jump to it, or use `F8` and `Shift+F8` to move between problems. Static index checks cover literal and named constant indexes when array bounds are known; dynamic indexes are checked when the program runs.
+The editor analyzes incomplete source in a background worker on served pages and on the main page when opened from disk, then underlines exact error spans. It checks expression structure, paired blocks, and constant array indexes, then merges those findings with self-hosted compiler errors. Hover an underline for its message, open Problems to jump to it, or use `F8` and `Shift+F8` to move between problems. Static index checks cover literal and named constant indexes when array bounds are known; dynamic indexes are checked when the program runs.
 
 Click a line number or press `F9` to toggle a breakpoint. **Debug** (`F5`) pauses before the first statement; Continue (`F5`) runs to the next breakpoint, Step (`F10`) executes one statement, and Stop (`Shift+F5`) ends the session. The Debug panel shows local and global variables and the call stack. Debugging uses the self-hosted compatibility WASM path and deterministic replay between pauses, so stepping deep into a long run is slower than normal Run. Source edits stop the current session; breakpoints remain saved with the workspace.
 
